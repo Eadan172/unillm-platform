@@ -1,0 +1,46 @@
+app:
+  name: "UniLLM Platform"
+  version: "0.1.0"
+  debug: true
+  host: "0.0.0.0"
+  port: 8000
+
+database:
+  type: "sqlite"
+  path: "./data/unillm.db"
+
+storage:
+  datasets_path: "./data/datasets"
+  annotations_path: "./data/annotations"
+  models_path: "./data/models"
+  logs_path: "./logs"
+
+model:
+  default_model: "Qwen/Qwen2.5-7B-Instruct"
+  max_model_len: 4096
+  gpu_memory_utilization: 0.9
+  tensor_parallel_size: 1
+
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.1
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+
+training:
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  logging_steps: 10
+  save_steps: 100
+
+evaluation:
+  metrics:
+    - "perplexity"
+    - "accuracy"
+    - "latency"
