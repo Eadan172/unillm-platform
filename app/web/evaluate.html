@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>评测 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="evaluate">
+  <div id="app-topbar"></div>
+  <div class="ullm-layout">
+    <nav id="app-sidebar"></nav>
+    <main class="ullm-content">
+      <div id="app-banner"></div>
+      <div id="page-content">
+        <div class="ullm-page-head">
+          <h2 class="ullm-page-title">评测</h2>
+        </div>
+
+        <div class="ullm-card">
+          <h3 class="ullm-section-title">新建评测</h3>
+          <div class="ullm-grid ullm-grid-2">
+            <div>
+              <div class="ullm-field">
+                <label for="ev-name">评测名称</label>
+                <input class="ullm-input" id="ev-name" placeholder="例如：基线模型-客服问答">
+              </div>
+              <div class="ullm-field">
+                <label for="ev-model">模型</label>
+                <select class="ullm-select" id="ev-model"><option value="">加载中…</option></select>
+              </div>
+              <div class="ullm-field">
+                <label for="ev-dataset">数据集</label>
+                <select class="ullm-select" id="ev-dataset"><option value="">（可留空，使用下方内联样本）</option></select>
+                <div class="ullm-hint">仅含参考答案（output/answer）的样本参与指标计算。</div>
+              </div>
+            </div>
+            <div>
+              <div class="ullm-field">
+                <label>指标</label>
+                <div class="ullm-inline">
+                  <label class="ullm-checkbox"><input type="checkbox" class="metric-cb" value="exact_match" checked> exact_match</label>
+                  <label class="ullm-checkbox"><input type="checkbox" class="metric-cb" value="token_f1" checked> token_f1</label>
+                  <label class="ullm-checkbox"><input type="checkbox" class="metric-cb" value="latency" checked> latency</label>
+                  <label class="ullm-checkbox"><input type="checkbox" class="metric-cb" value="perplexity"> perplexity</label>
+                </div>
+                <div class="ullm-hint">perplexity 需 torch + transformers，未安装时该卡片会如实显示「不可用」。</div>
+              </div>
+              <div class="ullm-field">
+                <label for="ev-inline">内联样本（选填，JSON 数组）</label>
+                <textarea class="ullm-textarea" id="ev-inline" placeholder='[{"instruction":"1+1=?","output":"2"}]'></textarea>
+                <div class="ullm-hint">填写后无需先建数据集即可评测；留空则使用上方所选数据集。</div>
+              </div>
+            </div>
+          </div>
+          <div id="ev-error"></div>
+          <div class="ullm-actions" style="justify-content:flex-end;">
+            <button type="button" class="ullm-btn ullm-btn-primary" id="run-btn">创建并运行</button>
+          </div>
+        </div>
+
+        <div id="eval-result" style="margin-top:16px;"></div>
+
+        <div class="ullm-card" style="margin-top:16px;">
+          <h3 class="ullm-section-title">历史评测</h3>
+          <div id="eval-history"><div class="ullm-hint">加载中…</div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var errEl = document.getElementById('ev-error');
+      var resultEl = document.getElementById('eval-result');
+      var historyEl = document.getElementById('eval-history');
+
+      function num(v, digits) {
+        var n = Layout.asNumber(v);
+        return n === null ? null : n.toFixed(digits === undefined ? 4 : digits);
+      }
+
+      function selectedMetrics() {
+        var boxes = document.getElementsByClassName('metric-cb');
+        var out = [];
+        for (var i = 0; i < boxes.length; i++) { if (boxes[i].checked) { out.push(boxes[i].value); } }
+        return out;
+      }
+
+      function optionList(items, valueKey, labelFn) {
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+          html += '<option value="' + Layout.esc(items[i][valueKey]) + '">' +
+                  Layout.esc(labelFn(items[i])) + '</option>';
+        }
+        return html;
+      }
+
+      function loadRefs() {
+        return Promise.all([
+          API.get('/api/model/list'),
+          API.get('/api/data/list')
+        ]).then(function (res) {
+          var models = res[0] || [];
+          var datasets = res[1] || [];
+          var modelSel = document.getElementById('ev-model');
+          var dsSel = document.getElementById('ev-dataset');
+          modelSel.innerHTML = models.length
+            ? optionList(models, 'id', function (m) { return m.name + ' (#' + m.id + ')'; })
+            : '<option value="">（无模型，请先到「模型」页注册）</option>';
+          dsSel.innerHTML = '<option value="">（不使用数据集）</option>' +
+            optionList(datasets, 'id', function (d) {
+              return d.name + ' (' + Layout.numOrUnknown(d.total_samples) + ')';
+            });
+        }).catch(function (err) {
+          Layout.renderError(errEl, err, loadRefs);
+        });
+      }
+
+      function loadHistory() {
+        return API.get('/api/evaluate/list').then(function (list) {
+          if (!list || list.length === 0) {
+            Layout.renderEmpty(historyEl, { icon: '📋', title: '还没有评测记录', desc: '填写上方表单，点击「创建并运行」开始第一次评测' });
+            return;
+          }
+          var rows = '';
+          for (var i = 0; i < list.length; i++) {
+            var e = list[i];
+            var st = e.status || '未知';
+            var cls = st === 'completed' ? 'ullm-badge-success'
+                    : st === 'failed' ? 'ullm-badge-error'
+                    : st === 'running' ? 'ullm-badge-warning' : 'ullm-badge-muted';
+            rows += '<tr>' +
+              '<td class="ullm-nowrap">' + Layout.esc(e.id) + '</td>' +
+              '<td>' + Layout.esc(e.eval_name) + '</td>' +
+              '<td class="ullm-nowrap"><span class="ullm-badge ' + cls + '">' + Layout.esc(st) + '</span></td>' +
+              '<td class="ullm-nowrap">' + Layout.esc(Layout.fmtDate(e.created_at)) + '</td>' +
+              '<td><button type="button" class="ullm-btn ullm-btn-sm" data-action="review" data-id="' + Layout.esc(e.id) + '">回看结果</button></td>' +
+            '</tr>';
+          }
+          historyEl.innerHTML =
+            '<div class="ullm-table-wrap"><table class="ullm-table">' +
+              '<thead><tr><th>ID</th><th>名称</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>' +
+              '<tbody>' + rows + '</tbody></table></div>';
+        }).catch(function (err) {
+          Layout.renderError(historyEl, err, loadHistory);
+        });
+      }
+
+      function metricCard(title, valueHtml, subHtml) {
+        return '<div class="ullm-card">' +
+          '<div class="ullm-stat-label">' + Layout.esc(title) + '</div>' +
+          '<div class="ullm-metric-value">' + valueHtml + '</div>' +
+          '<div class="ullm-metric-sub">' + (subHtml || '') + '</div>' +
+        '</div>';
+      }
+
+      function unavailableCard(title, reason, howTo) {
+        return '<div class="ullm-card ullm-unavailable">' +
+          '<div class="ullm-stat-label">' + Layout.esc(title) + '</div>' +
+          '<div class="ullm-unavailable-title">⛔ 不可用</div>' +
+          (reason ? '<div class="ullm-unavailable-row">原因：' + Layout.esc(reason) + '</div>' : '') +
+          (howTo ? '<div class="ullm-unavailable-row">启用方式：' + Layout.esc(howTo) + '</div>' : '') +
+        '</div>';
+      }
+
+      function renderResult(info) {
+        if (!info) { return; }
+        var results = info.results;
+        var head = '<div class="ullm-page-head"><h3 class="ullm-section-title" style="margin:0;">评测结果：' +
+          Layout.esc(info.eval_name || ('#' + info.eval_id)) + '</h3></div>';
+
+        if (!results) {
+          resultEl.innerHTML = head +
+            '<div class="ullm-banner ullm-muted">该评测尚无结果（status：' +
+            Layout.esc(info.status || '未知') + '）。请先运行评测。</div>';
+          return;
+        }
+        if (results.error) {
+          resultEl.innerHTML = head +
+            '<div class="ullm-banner ullm-error" role="alert"><strong>评测失败：</strong>' +
+            '<span>' + Layout.esc(results.error) + '</span></div>';
+          return;
+        }
+
+        var html = head;
+
+        // 可信度标注
+        if (results.backend_is_real_model === false) {
+          html += '<div class="ullm-banner ullm-warning" role="alert">' +
+            '<strong>⚠ 本次结果来自：占位后端（backend_is_real_model=false）。</strong>' +
+            '<span>该指标不可作为模型能力结论。</span></div>';
+        } else if (results.backend_is_real_model === true) {
+          html += '<div class="ullm-banner ullm-success">结果来自真实模型后端。</div>';
+        }
+
+        html += '<div class="ullm-inline" style="margin-bottom:12px;">' +
+          '<span class="ullm-stat-label">样本数：' + Layout.esc(Layout.numOrUnknown(results.sample_count)) + '</span>' +
+          '<span class="ullm-stat-label">后端：' + Layout.esc(results.backend || '未知') + '</span>' +
+        '</div>';
+
+        html += '<div class="ullm-grid ullm-grid-3">';
+
+        // exact_match
+        if (results.exact_match) {
+          var em = results.exact_match;
+          var emVal = num(em.value, 4);
+          var emSub = (Layout.asNumber(em.correct) !== null && Layout.asNumber(em.total) !== null)
+            ? (em.correct + ' / ' + em.total + ' 正确') : '';
+          html += metricCard('exact_match', emVal === null ? '不可用' : emVal, emSub);
+        } else {
+          html += metricCard('exact_match', '<span class="text-muted">未请求</span>', '');
+        }
+
+        // token_f1
+        if (results.token_f1) {
+          var f1 = results.token_f1;
+          var f1Val = num(f1.value, 4);
+          html += metricCard('token_f1 (字符级)', f1Val === null ? '不可用' : f1Val,
+            f1.unit ? ('单位：' + Layout.esc(f1.unit)) : '');
+        } else {
+          html += metricCard('token_f1 (字符级)', '<span class="text-muted">未请求</span>', '');
+        }
+
+        // latency
+        if (results.latency) {
+          var lat = results.latency;
+          var avg = Layout.asNumber(lat.avg_ms);
+          var latSub = '';
+          var parts = [];
+          if (Layout.asNumber(lat.p50_ms) !== null) { parts.push('p50 ' + lat.p50_ms + 'ms'); }
+          if (Layout.asNumber(lat.p95_ms) !== null) { parts.push('p95 ' + lat.p95_ms + 'ms'); }
+          if (Layout.asNumber(lat.min_ms) !== null) { parts.push('min ' + lat.min_ms + 'ms'); }
+          if (Layout.asNumber(lat.max_ms) !== null) { parts.push('max ' + lat.max_ms + 'ms'); }
+          if (parts.length) { latSub = parts.join('　'); }
+          html += metricCard('latency（实测）',
+            avg === null ? '不可用' : ('avg ' + avg + ' ms'),
+            latSub);
+        } else {
+          html += metricCard('latency（实测）', '<span class="text-muted">未请求</span>', '');
+        }
+
+        // perplexity —— available=false 时必须走灰色不可用卡，绝不显示数字
+        if (results.perplexity) {
+          var ppl = results.perplexity;
+          if (ppl.available === true) {
+            var pplVal = num(ppl.value, 4);
+            if (pplVal === null) {
+              html += unavailableCard('perplexity', '后端声明可用但未返回数值，无法展示。', '');
+            } else {
+              html += metricCard('perplexity', pplVal,
+                Layout.asNumber(ppl.tokens) !== null ? ('tokens：' + ppl.tokens) : '');
+            }
+          } else {
+            html += unavailableCard('perplexity', ppl.reason, ppl.how_to_enable);
+          }
+        } else {
+          html += metricCard('perplexity', '<span class="text-muted">未请求</span>', '');
+        }
+
+        html += '</div>';
+
+        // 指标口径说明（来自后端原样透传）
+        if (results.metric_definitions) {
+          var defs = results.metric_definitions;
+          var items = '';
+          for (var key in defs) {
+            if (Object.prototype.hasOwnProperty.call(defs, key)) {
+              items += '<li><span class="ullm-mono">' + Layout.esc(key) + '</span>：' + Layout.esc(defs[key]) + '</li>';
+            }
+          }
+          if (items) {
+            html += '<div class="ullm-card" style="margin-top:16px;">' +
+              '<h3 class="ullm-section-title">指标口径说明</h3>' +
+              '<ul style="margin:0;padding-left:20px;">' + items + '</ul></div>';
+          }
+        }
+
+        resultEl.innerHTML = html;
+      }
+
+      function doRun() {
+        errEl.innerHTML = '';
+        var name = (document.getElementById('ev-name').value || '').trim();
+        var modelId = document.getElementById('ev-model').value;
+        var datasetVal = document.getElementById('ev-dataset').value;
+        var metrics = selectedMetrics();
+
+        if (!name) { Layout.renderError(errEl, { detail: '请填写评测名称' }); return; }
+        if (!modelId) { Layout.renderError(errEl, { detail: '请选择模型（如为空，请先到「模型」页注册）' }); return; }
+        if (metrics.length === 0) { Layout.renderError(errEl, { detail: '请至少勾选一个指标' }); return; }
+
+        var inlineText = (document.getElementById('ev-inline').value || '').trim();
+        var testData = null;
+        if (inlineText) {
+          try {
+            testData = JSON.parse(inlineText);
+          } catch (e) {
+            Layout.renderError(errEl, { detail: '内联样本不是合法 JSON：' + e.message });
+            return;
+          }
+          if (!Array.isArray(testData)) {
+            Layout.renderError(errEl, { detail: '内联样本必须是 JSON 数组' });
+            return;
+          }
+        }
+        if (!datasetVal && !testData) {
+          Layout.renderError(errEl, { detail: '请选择数据集，或填写内联样本' });
+          return;
+        }
+
+        var btn = document.getElementById('run-btn');
+        Layout.setBusy(btn, true, '运行中…');
+        var createBody = { model_id: parseInt(modelId, 10), eval_name: name, metrics: metrics };
+        if (datasetVal) { createBody.dataset_id = parseInt(datasetVal, 10); }
+
+        API.post('/api/evaluate/create', createBody).then(function (created) {
+          var runBody = testData ? { test_data: testData } : null;
+          return API.post('/api/evaluate/' + created.id + '/run', runBody).then(function (run) {
+            return { id: created.id, run: run };
+          });
+        }).then(function (ctx) {
+          Layout.setBusy(btn, false);
+          Layout.toast('评测完成', 'success');
+          renderResult({
+            eval_id: ctx.id,
+            eval_name: name,
+            status: 'completed',
+            results: ctx.run.results
+          });
+          loadHistory();
+          window.scrollTo({ top: resultEl.offsetTop - 20, behavior: 'smooth' });
+        }).catch(function (err) {
+          Layout.setBusy(btn, false);
+          Layout.renderError(errEl, err, doRun);
+          renderResult({
+            eval_id: null, eval_name: name, status: 'failed',
+            results: { error: (err && err.detail) ? err.detail : '评测失败' }
+          });
+        });
+      }
+
+      function review(id) {
+        resultEl.innerHTML = '';
+        Layout.renderLoading(resultEl, '正在读取评测结果…');
+        API.get('/api/evaluate/' + id + '/result').then(function (info) {
+          renderResult(info);
+        }).catch(function (err) {
+          Layout.renderError(resultEl, err, function () { review(id); });
+        });
+      }
+
+      historyEl.addEventListener('click', function (e) {
+        var target = e.target.closest ? e.target.closest('[data-action="review"]') : null;
+        if (!target) { return; }
+        review(target.getAttribute('data-id'));
+      });
+
+      document.getElementById('run-btn').addEventListener('click', doRun);
+
+      Layout.boot(function () {
+        return Promise.all([loadRefs(), loadHistory()]);
+      });
+    })();
+  </script>
+</body>
+</html>

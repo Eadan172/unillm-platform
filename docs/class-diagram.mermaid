@@ -1,0 +1,102 @@
+classDiagram
+    class AppConfig {
+        +str name
+        +str version
+        +bool debug
+        +str host
+        +int port
+        +List~str~ cors_origins
+        +bool cors_allow_credentials
+        +bool auth_enabled
+        +str api_token
+        +str api_token_file
+    }
+    class Settings {
+        +AppConfig app
+        +DatabaseConfig database
+        +StorageConfig storage
+        +ModelConfig model
+        +EvaluationConfig evaluation
+    }
+    class SecurityModule {
+        <<module>>
+        +is_protected_path(path) bool
+        +extract_token(request) Optional~str~
+        +resolve_token() str
+        +ensure_token() str
+        +verify_token(candidate) bool
+        +reset_token_cache() void
+        +print_token_banner(token) void
+    }
+    class AuthMiddleware {
+        +dispatch(request, call_next) Response
+    }
+    class ErrorsModule {
+        <<module>>
+        +error_body(detail, code, hint) dict
+        +humanize_validation(errors) str
+        +http_exception_handler(request, exc) JSONResponse
+        +validation_exception_handler(request, exc) JSONResponse
+        +unhandled_exception_handler(request, exc) JSONResponse
+        +register_exception_handlers(app) void
+    }
+    class ErrorResponse {
+        +str detail
+        +str error_code
+        +str hint
+    }
+    class AuthVerifyResponse {
+        +bool valid
+        +bool auth_enabled
+    }
+    class ApiInfoResponse {
+        +str name
+        +str version
+        +str docs
+        +str redoc
+        +str health
+        +str console
+        +bool auth_enabled
+    }
+    class HealthResponse {
+        +str status
+        +str version
+        +int models_loaded
+        +str inference_backend
+        +bool inference_backend_is_real_model
+        +bool degraded
+        +str database
+        +int registered_models
+    }
+    class APIJS {
+        <<browser>>
+        +getToken() str
+        +setToken(t) void
+        +clearToken() void
+        +request(path, opts) Promise~dict~
+        +get(path) Promise
+        +post(path, body) Promise
+        +del(path) Promise
+        +verify() Promise~bool~
+        +download(path, filename) Promise
+    }
+    class LayoutJS {
+        <<browser>>
+        +guard() Promise~bool~
+        +renderChrome() void
+        +renderTopbar() void
+        +renderSidebar() void
+        +renderBanner() void
+        +toast(msg, type) void
+        +renderEmpty(el, opts) void
+        +renderError(el, apiError, retryFn) void
+        +renderLoading(el) void
+    }
+    Settings --> AppConfig
+    AuthMiddleware --> SecurityModule : uses
+    AuthMiddleware --> ErrorResponse : returns
+    ErrorsModule --> ErrorResponse : builds
+    APIJS --> AuthVerifyResponse : consumes
+    APIJS --> ErrorResponse : parses into ApiError
+    LayoutJS --> APIJS : uses
+    LayoutJS --> HealthResponse : reads degraded

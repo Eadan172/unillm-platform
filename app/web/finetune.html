@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>微调 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="finetune">
+  <div id="app-topbar"></div>
+  <div class="ullm-layout">
+    <nav id="app-sidebar"></nav>
+    <main class="ullm-content">
+      <div id="app-banner"></div>
+      <div id="page-content">
+        <div class="ullm-page-head">
+          <h2 class="ullm-page-title">微调</h2>
+          <button type="button" class="ullm-btn ullm-btn-primary" id="new-job-btn">+ 新建微调任务</button>
+        </div>
+
+        <div class="ullm-banner ullm-warning" role="alert">
+          <strong>⚠ 前置提醒：</strong>
+          <span>当前环境通常未安装 GPU 训练依赖，LoRA 微调任务会 <em>失败</em> 并如实显示原因（需 <span class="ullm-mono">requirements-gpu.txt</span>，Linux + CUDA）。
+          任务编排链路仍可用，可继续创建以验证流程 —— 平台不会把失败伪装成「训练完成」。</span>
+        </div>
+
+        <div id="ft-error"></div>
+        <div class="ullm-card" style="padding:0;">
+          <div id="ft-body" style="padding:16px;"><div class="ullm-hint">加载中…</div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var bodyEl = document.getElementById('ft-body');
+      var errEl = document.getElementById('ft-error');
+      var jobs = [];
+      var pollTimer = null;
+
+      function statusBadge(status) {
+        var s = status || '未知';
+        var cls = s === 'completed' ? 'ullm-badge-success'
+                : s === 'failed' ? 'ullm-badge-error'
+                : s === 'running' ? 'ullm-badge-warning'
+                : s === 'cancelled' ? 'ullm-badge-muted' : 'ullm-badge-muted';
+        return '<span class="ullm-badge ' + cls + '">' + Layout.esc(s) + '</span>';
+      }
+
+      function progressHtml(job) {
+        var p = Layout.asNumber(job.progress);
+        if (p === null) { return '<span class="text-muted">未知</span>'; }
+        var w = Math.max(0, Math.min(100, p));
+        return '<div class="ullm-progress" style="min-width:90px;"><span style="width:' + w + '%;"></span></div>' +
+               '<div class="ullm-hint">' + p + '%</div>';
+      }
+
+      function renderJobs() {
+        if (!jobs || jobs.length === 0) {
+          Layout.renderEmpty(bodyEl, {
+            icon: '⚙️', title: '还没有微调任务',
+            desc: '新建一个 LoRA 微调任务以验证任务编排链路（真实训练需 GPU 依赖）',
+            actionLabel: '+ 新建微调任务', onAction: openNewJob
+          });
+          return;
+        }
+        var rows = '';
+        for (var i = 0; i < jobs.length; i++) {
+          var j = jobs[i];
+          var failed = j.status === 'failed';
+          var actions = '';
+          if (j.status === 'pending' || j.status === 'failed' || j.status === 'cancelled' || j.status === 'completed') {
+            actions += '<button type="button" class="ullm-btn ullm-btn-sm" data-action="start" data-id="' + Layout.esc(j.id) + '">启动</button>';
+          }
+          if (j.status === 'running') {
+            actions += '<button type="button" class="ullm-btn ullm-btn-danger ullm-btn-sm" data-action="cancel" data-id="' + Layout.esc(j.id) + '">取消</button>';
+          }
+          actions += '<button type="button" class="ullm-btn ullm-btn-sm" data-action="detail" data-id="' + Layout.esc(j.id) + '">详情</button>';
+
+          rows += '<tr>' +
+            '<td class="ullm-nowrap">' + Layout.esc(j.id) + '</td>' +
+            '<td>' + Layout.esc(j.job_name) + '</td>' +
+            '<td class="ullm-nowrap">' + Layout.esc(j.model_id) + '</td>' +
+            '<td class="ullm-nowrap">' + Layout.esc(j.dataset_id) + '</td>' +
+            '<td class="ullm-nowrap">' + statusBadge(j.status) + '</td>' +
+            '<td class="ullm-nowrap">' + progressHtml(j) + '</td>' +
+            '<td><div class="ullm-actions">' + actions + '</div></td>' +
+          '</tr>';
+          if (failed && j.error_message) {
+            rows += '<tr><td colspan="7" class="text-error" style="white-space:pre-wrap;">↳ 失败原因：' +
+              Layout.esc(j.error_message) + '</td></tr>';
+          }
+        }
+        bodyEl.innerHTML =
+          '<div class="ullm-table-wrap"><table class="ullm-table">' +
+            '<thead><tr><th>ID</th><th>名称</th><th>模型</th><th>数据集</th><th>状态</th><th>进度</th><th>操作</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table></div>';
+      }
+
+      function load(showLoading) {
+        if (showLoading) { Layout.renderLoading(bodyEl, '正在加载微调任务…'); }
+        return API.get('/api/finetune/list').then(function (list) {
+          jobs = list || [];
+          renderJobs();
+          ensurePolling();
+        }).catch(function (err) {
+          Layout.renderError(errEl, err, function () { load(true); });
+        });
+      }
+
+      function ensurePolling() {
+        if (pollTimer) { return; }
+        pollTimer = setInterval(pollRunning, 2500);
+      }
+
+      function pollRunning() {
+        var running = [];
+        for (var i = 0; i < jobs.length; i++) {
+          if (jobs[i].status === 'running') { running.push(jobs[i]); }
+        }
+        if (running.length === 0) {
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          return;
+        }
+        Promise.all(running.map(function (j) {
+          return API.get('/api/finetune/' + j.id + '/status').catch(function () { return null; });
+        })).then(function (results) {
+          for (var k = 0; k < results.length; k++) {
+            var s = results[k];
+            if (!s) { continue; }
+            for (var m = 0; m < jobs.length; m++) {
+              if (jobs[m].id === s.job_id) {
+                jobs[m].status = s.status;
+                jobs[m].progress = s.progress;
+                jobs[m].error_message = s.error_message;
+                jobs[m].output_path = s.output_path;
+              }
+            }
+          }
+          renderJobs();
+        });
+      }
+
+      function openNewJob() {
+        var body = document.createElement('div');
+        body.innerHTML =
+          '<div class="ullm-field"><label for="nj-name">任务名称</label>' +
+            '<input class="ullm-input" id="nj-name" placeholder="例如：lora-job-v1"></div>' +
+          '<div class="ullm-field"><label for="nj-model">模型</label>' +
+            '<select class="ullm-select" id="nj-model"><option value="">加载中…</option></select></div>' +
+          '<div class="ullm-field"><label for="nj-dataset">数据集</label>' +
+            '<select class="ullm-select" id="nj-dataset"><option value="">加载中…</option></select></div>' +
+          '<div class="ullm-field"><label for="nj-method">方法</label>' +
+            '<select class="ullm-select" id="nj-method"><option value="lora">lora</option></select></div>' +
+          '<div id="nj-error"></div>';
+        var modalRef = Layout.modal({
+          title: '新建微调任务',
+          bodyNode: body,
+          actions: [
+            { label: '取消' },
+            { label: '创建', primary: true, keepOpen: true, onClick: function (ctx) { doCreate(ctx); return false; } }
+          ]
+        });
+        var modelSel = modalRef.body.querySelector('#nj-model');
+        var dsSel = modalRef.body.querySelector('#nj-dataset');
+        var errBox = modalRef.body.querySelector('#nj-error');
+
+        Promise.all([
+          API.get('/api/model/list'),
+          API.get('/api/data/list')
+        ]).then(function (res) {
+          var models = res[0] || [];
+          var datasets = res[1] || [];
+          var mHtml = '';
+          for (var i = 0; i < models.length; i++) {
+            mHtml += '<option value="' + Layout.esc(models[i].id) + '">' + Layout.esc(models[i].name) + '</option>';
+          }
+          modelSel.innerHTML = mHtml || '<option value="">（无模型，请先注册）</option>';
+          var dHtml = '';
+          for (var k = 0; k < datasets.length; k++) {
+            dHtml += '<option value="' + Layout.esc(datasets[k].id) + '">' +
+                     Layout.esc(datasets[k].name) + '</option>';
+          }
+          dsSel.innerHTML = dHtml || '<option value="">（无数据集，请先导入）</option>';
+        }).catch(function (err) {
+          Layout.renderError(errBox, err);
+        });
+
+        function doCreate(ctx) {
+          errBox.innerHTML = '';
+          var name = (modalRef.body.querySelector('#nj-name').value || '').trim();
+          if (!name) { Layout.renderError(errBox, { detail: '请填写任务名称' }); return; }
+          if (!modelSel.value) { Layout.renderError(errBox, { detail: '请选择模型' }); return; }
+          if (!dsSel.value) { Layout.renderError(errBox, { detail: '请选择数据集' }); return; }
+          Layout.setBusy(ctx.btn, true, '创建中…');
+          API.post('/api/finetune/create', {
+            model_id: parseInt(modelSel.value, 10),
+            dataset_id: parseInt(dsSel.value, 10),
+            job_name: name,
+            method: modalRef.body.querySelector('#nj-method').value
+          }).then(function () {
+            Layout.setBusy(ctx.btn, false);
+            ctx.close();
+            Layout.toast('已创建微调任务', 'success');
+            load(true);
+          }).catch(function (err) {
+            Layout.setBusy(ctx.btn, false);
+            Layout.renderError(errBox, err);
+          });
+        }
+      }
+
+      function doStart(id) {
+        errEl.innerHTML = '';
+        API.post('/api/finetune/' + id + '/start', null).then(function () {
+          Layout.toast('已启动任务 #' + id, 'success');
+          load(false);
+        }).catch(function (err) {
+          // 如实展示后端 detail（例如「Job already running」）
+          Layout.renderError(errEl, err);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      }
+
+      function doCancel(id) {
+        errEl.innerHTML = '';
+        API.post('/api/finetune/' + id + '/cancel', null).then(function (res) {
+          var note = (res && res.note) ? res.note : '已发送取消信号。';
+          Layout.toast(note, 'warning');
+          load(false);
+        }).catch(function (err) {
+          // 非 running 取消会返回 400，如实展示 detail，不美化
+          Layout.renderError(errEl, err);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      }
+
+      function doDetail(id) {
+        Layout.renderLoading(errEl, '正在读取任务状态…');
+        API.get('/api/finetune/' + id + '/status').then(function (s) {
+          errEl.innerHTML = '';
+          var body = document.createElement('div');
+          var prog = Layout.asNumber(s.progress);
+          body.innerHTML =
+            '<div class="ullm-field"><div class="ullm-stat-label">任务</div><div>' +
+              Layout.esc(s.job_name || ('#' + id)) + ' ' + statusBadge(s.status) + '</div></div>' +
+            '<div class="ullm-field"><div class="ullm-stat-label">进度</div><div>' +
+              (prog === null ? '未知' : (prog + '%')) + '</div></div>' +
+            '<div class="ullm-field"><div class="ullm-stat-label">方法</div><div>' + Layout.esc(s.method || '—') + '</div></div>' +
+            '<div class="ullm-field"><div class="ullm-stat-label">产物路径</div><div class="ullm-mono">' +
+              Layout.esc(s.output_path || '（无）') + '</div></div>' +
+            (s.error_message
+              ? '<div class="ullm-field"><div class="ullm-stat-label">错误原因</div>' +
+                '<pre class="ullm-pre text-error">' + Layout.esc(s.error_message) + '</pre></div>'
+              : '');
+          Layout.modal({ title: '微调任务详情', bodyNode: body });
+        }).catch(function (err) {
+          Layout.renderError(errEl, err, function () { doDetail(id); });
+        });
+      }
+
+      bodyEl.addEventListener('click', function (e) {
+        var target = e.target.closest ? e.target.closest('[data-action]') : null;
+        if (!target) { return; }
+        var action = target.getAttribute('data-action');
+        var id = target.getAttribute('data-id');
+        if (action === 'start') { doStart(id); }
+        else if (action === 'cancel') { doCancel(id); }
+        else if (action === 'detail') { doDetail(id); }
+      });
+
+      document.getElementById('new-job-btn').addEventListener('click', openNewJob);
+
+      Layout.boot(function () { return load(true); });
+    })();
+  </script>
+</body>
+</html>

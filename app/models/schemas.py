@@ -1,7 +1,10 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
+
+# 统一的 ORM 模式：允许 from_attributes 直接读取 ORM 对象
+ORM_CONFIG = ConfigDict(from_attributes=True)
 
 
 class DataSourceType(str, Enum):
@@ -45,8 +48,7 @@ class DatasetResponse(BaseModel):
     total_samples: int
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ORM_CONFIG
 
 
 class AnnotationCreate(BaseModel):
@@ -73,8 +75,7 @@ class AnnotationResponse(BaseModel):
     annotator: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ORM_CONFIG
 
 
 class AnnotationTaskCreate(BaseModel):
@@ -93,8 +94,7 @@ class AnnotationTaskResponse(BaseModel):
     status: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ORM_CONFIG
 
 
 class ModelLoadRequest(BaseModel):
@@ -111,8 +111,7 @@ class ModelResponse(BaseModel):
     is_loaded: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ORM_CONFIG
 
 
 class ChatMessage(BaseModel):
@@ -139,6 +138,8 @@ class ChatCompletionResponse(BaseModel):
     id: str
     object: str = "chat.completion"
     model: str
+    # 实际产出该响应的后端：vllm(真实模型) / mock(确定性占位) / scripted(测试)
+    backend: Optional[str] = None
     choices: List[ChatCompletionChoice]
     created: int
     usage: Dict[str, int]
@@ -163,6 +164,8 @@ class CompletionResponse(BaseModel):
     id: str
     object: str = "text_completion"
     model: str
+    # 实际产出该响应的后端：vllm(真实模型) / mock(确定性占位) / scripted(测试)
+    backend: Optional[str] = None
     choices: List[CompletionChoice]
     created: int
     usage: Dict[str, int]
@@ -186,8 +189,7 @@ class FinetuneResponse(BaseModel):
     progress: float
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ORM_CONFIG
 
 
 class EvaluationCreate(BaseModel):
@@ -206,11 +208,17 @@ class EvaluationResponse(BaseModel):
     results: Optional[Dict[str, Any]]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ORM_CONFIG
 
 
 class HealthResponse(BaseModel):
     status: str
     version: str
     models_loaded: int
+    # 以下字段让 /health 暴露运行时真实状态，而不是硬编码值
+    inference_backend: str
+    inference_backend_is_real_model: bool
+    # degraded=True 表示当前跑在确定性 mock 后端上，并非真实模型推理
+    degraded: bool
+    database: str
+    registered_models: int

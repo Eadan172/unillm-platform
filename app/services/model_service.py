@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from pathlib import Path
 
-from app.models.database import Model, FinetuneJob
+from app.models.database import Model, FinetuneJob, utcnow
 from app.config import settings
 
 
@@ -101,11 +101,9 @@ class ModelService:
             if error_message:
                 job.error_message = error_message
             if status == "running" and not job.started_at:
-                from datetime import datetime
-                job.started_at = datetime.utcnow()
+                job.started_at = utcnow()
             if status in ["completed", "failed"]:
-                from datetime import datetime
-                job.completed_at = datetime.utcnow()
+                job.completed_at = utcnow()
             self.db.commit()
             self.db.refresh(job)
         return job

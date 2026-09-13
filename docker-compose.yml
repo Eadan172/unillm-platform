@@ -1,0 +1,33 @@
+# UniLLM Platform —— 一键编排
+#
+# 使用：
+#   docker compose up --build
+# 然后访问 http://127.0.0.1:8000/console/
+#
+# 说明：
+# - 固定 1 个 uvicorn worker（SQLite 单文件约束，见 README）。
+# - 挂载 ./data 与 ./logs 持久化，含自动生成的访问 Token（./data/.api_token）。
+# - Token 注入方式（二选一）：
+#     a) 环境变量：UNILLM_APP__API_TOKEN=你的Token docker compose up
+#     b) 留空：服务启动时自动生成 Token，并在启动日志中打印，同时写入 ./data/.api_token
+
+services:
+  unillm:
+    build: .
+    image: unillm-platform:0.3.0
+    container_name: unillm-platform
+    ports:
+      - "8000:8000"
+    environment:
+      UNILLM_APP__AUTH_ENABLED: "true"
+      # 留空则自动生成并持久化到 ./data/.api_token；也可显式注入团队 Token
+      UNILLM_APP__API_TOKEN: "${UNILLM_APP__API_TOKEN:-}"
+      UNILLM_APP__API_TOKEN_FILE: "./data/.api_token"
+      UNILLM_DATABASE__PATH: "./data/unillm.db"
+      UNILLM_APP__DEBUG: "false"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    # 固定单 worker
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    restart: unless-stopped

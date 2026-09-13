@@ -1,0 +1,30 @@
+# ==========================================================================
+# UniLLM Platform - 可选 GPU 增强依赖
+#
+#   pip install -r requirements-gpu.txt
+#
+# !! 平台与架构限制（实测结论，请先读再装）!!
+#
+#   1. vLLM 官方不提供 Windows wheel，且仅支持 Linux + CUDA。
+#      Linux 部署：pip install -r requirements-gpu.txt
+#      Windows 部署：保留 CPU 核心依赖即可，平台会自动使用 mock 后端；
+#                     或改用 WSL2 / Docker + NVIDIA Container Toolkit。
+#   2. torch / vllm 体积达数 GB，且对 Python 与 CUDA 版本有强绑定，
+#      因此不与 requirements.txt 混装，避免"装不上核心依赖"。
+#   3. 未安装本文件时，推理与微调会诚实降级并在 API 响应中标注
+#      degraded=true / backend=mock，功能链路仍完整可跑。
+# ==========================================================================
+
+-r requirements.txt
+
+# --- 真实推理引擎（Linux + CUDA 11.8+，注意 vLLM 0.3.x 需 torch 2.1.x） ---
+vllm>=0.3.0
+
+# --- LoRA / SFT 微调 ---
+torch>=2.1.2
+transformers>=4.37.0
+peft>=0.7.1
+accelerate>=0.25.0
+bitsandbytes>=0.41.3
+datasets>=2.16.1
+sentencepiece>=0.1.99

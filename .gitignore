@@ -121,10 +121,14 @@ venv.bak/
 *.sw?
 
 # Project specific
+# 会话期演示库（本地演示用，不属于交付内容；交付依赖 run_case.py / smoke_test.py 自建数据）
+data/_demo/
 data/datasets/*.jsonl
 data/annotations/*.jsonl
 data/models/*
 !data/datasets/sample_data.jsonl
+# 自动生成的访问令牌：密钥，绝不提交
+data/.api_token
 logs/*.log
 *.db
 *.sqlite
@@ -146,3 +150,20 @@ logs/*.log
 *.bak
 *.swp
 *~
+
+# 协作/QA 过程中的临时产物（勿提交，会影响仓库整洁）
+.qa*/
+.qa_lead_ct/
+.se3_*
+.se_*
+.qa3/
+.tmp_*
+.pytemp/
+.pytest_tmp/
+.ptmp*/
+ptmp_*/
+.check_out.txt
+.smoke_out.txt
+.gitinfo.txt
+.pytest_out.txt
+.pytest_report.xml

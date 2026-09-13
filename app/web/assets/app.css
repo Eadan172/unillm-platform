@@ -1,0 +1,426 @@
+/* UniLLM 控制台 · 全站唯一 CSS
+ * 零外部依赖、零 CDN：仅使用系统字体，断网可用。
+ * 类名前缀统一 ullm-；设计 token 见 :root。
+ */
+
+:root {
+  --ullm-primary: #2563eb;
+  --ullm-primary-hover: #1d4ed8;
+  --ullm-success-fg: #1a7f37;
+  --ullm-success-bg: #e6f4ea;
+  --ullm-warning-fg: #9a6700;
+  --ullm-warning-bg: #fff8e1;
+  --ullm-error-fg: #b42318;
+  --ullm-error-bg: #fdecea;
+  --ullm-muted-fg: #57606a;
+  --ullm-muted-bg: #f6f8fa;
+  --ullm-border: #d0d7de;
+  --ullm-text: #1f2328;
+  --ullm-bg: #ffffff;
+  --ullm-topbar-h: 56px;
+  --ullm-sidebar-w: 208px;
+  --ullm-radius: 8px;
+  --ullm-shadow: 0 1px 2px rgba(31, 35, 40, 0.08);
+  --ullm-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --ullm-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--ullm-muted-bg);
+  color: var(--ullm-text);
+  font-family: var(--ullm-font);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--ullm-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ------------------------------ 顶栏 ------------------------------ */
+.ullm-topbar {
+  height: var(--ullm-topbar-h);
+  background: var(--ullm-bg);
+  border-bottom: 1px solid var(--ullm-border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+
+.ullm-topbar-inner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ullm-brand {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.ullm-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--ullm-muted-fg);
+}
+
+.ullm-status { display: inline-flex; align-items: center; gap: 6px; }
+
+.ullm-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  background: #9aa4af;
+  flex: 0 0 auto;
+}
+.ullm-status-dot.is-success { background: #2da44e; }
+.ullm-status-dot.is-warning { background: #d29922; }
+.ullm-status-dot.is-error { background: #cf222e; }
+
+/* ------------------------------ 布局 ------------------------------ */
+.ullm-layout { display: flex; align-items: flex-start; min-height: calc(100vh - var(--ullm-topbar-h)); }
+
+#app-sidebar {
+  width: var(--ullm-sidebar-w);
+  flex: 0 0 var(--ullm-sidebar-w);
+  background: var(--ullm-bg);
+  border-right: 1px solid var(--ullm-border);
+  min-height: calc(100vh - var(--ullm-topbar-h));
+  padding: 12px 8px;
+  position: sticky;
+  top: var(--ullm-topbar-h);
+  align-self: stretch;
+}
+
+.ullm-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  color: var(--ullm-text);
+  font-size: 14px;
+  text-decoration: none;
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+.ullm-nav-item:hover { background: var(--ullm-muted-bg); text-decoration: none; }
+.ullm-nav-item.is-active { background: #eaf1fd; color: var(--ullm-primary); font-weight: 600; }
+
+.ullm-content { flex: 1 1 auto; padding: 20px 24px 48px; min-width: 0; }
+
+/* ------------------------------ 降级横幅 ------------------------------ */
+.ullm-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+  padding: 10px 14px;
+  border-radius: var(--ullm-radius);
+  border: 1px solid transparent;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.ullm-banner strong { font-size: 13.5px; }
+.ullm-warning { background: var(--ullm-warning-bg); color: var(--ullm-warning-fg); border-color: #f0d48a; }
+.ullm-error { background: var(--ullm-error-bg); color: var(--ullm-error-fg); border-color: #f3b7b0; }
+.ullm-success { background: var(--ullm-success-bg); color: var(--ullm-success-fg); border-color: #b7e0c3; }
+.ullm-muted { background: var(--ullm-muted-bg); color: var(--ullm-muted-fg); border-color: var(--ullm-border); }
+
+/* ------------------------------ 卡片 ------------------------------ */
+.ullm-card {
+  background: var(--ullm-bg);
+  border: 1px solid var(--ullm-border);
+  border-radius: var(--ullm-radius);
+  padding: 16px;
+  box-shadow: var(--ullm-shadow);
+}
+
+.ullm-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.ullm-page-title { font-size: 20px; font-weight: 600; margin: 0; }
+
+.ullm-grid { display: grid; gap: 16px; }
+.ullm-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ullm-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ullm-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.ullm-stat-label { font-size: 13px; color: var(--ullm-muted-fg); margin-bottom: 8px; }
+.ullm-stat-value { font-size: 26px; font-weight: 600; line-height: 1.2; }
+.ullm-stat-sub { font-size: 12px; color: var(--ullm-muted-fg); margin-top: 4px; word-break: break-all; }
+
+.ullm-section-title { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
+
+/* ------------------------------ 按钮 ------------------------------ */
+.ullm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: var(--ullm-text);
+  background: var(--ullm-bg);
+  border: 1px solid var(--ullm-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ullm-btn:hover { background: var(--ullm-muted-bg); }
+.ullm-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.ullm-btn-primary { background: var(--ullm-primary); border-color: var(--ullm-primary); color: #fff; }
+.ullm-btn-primary:hover { background: var(--ullm-primary-hover); border-color: var(--ullm-primary-hover); }
+.ullm-btn-danger { color: var(--ullm-error-fg); border-color: #f0b0aa; }
+.ullm-btn-danger:hover { background: var(--ullm-error-bg); }
+.ullm-btn-sm { padding: 4px 10px; font-size: 12.5px; }
+.ullm-btn-link { border: none; background: none; color: var(--ullm-primary); padding: 2px 4px; cursor: pointer; }
+.ullm-btn-link:hover { text-decoration: underline; background: none; }
+
+/* ------------------------------ 表格 ------------------------------ */
+.ullm-table-wrap { overflow-x: auto; }
+.ullm-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--ullm-bg);
+  font-size: 13.5px;
+}
+.ullm-table th, .ullm-table td {
+  border-bottom: 1px solid var(--ullm-border);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.ullm-table th { background: var(--ullm-muted-bg); font-weight: 600; white-space: nowrap; }
+.ullm-table td.ullm-nowrap { white-space: nowrap; }
+.ullm-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ------------------------------ 徽章 ------------------------------ */
+.ullm-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.ullm-badge-success { background: var(--ullm-success-bg); color: var(--ullm-success-fg); border-color: #b7e0c3; }
+.ullm-badge-warning { background: var(--ullm-warning-bg); color: var(--ullm-warning-fg); border-color: #f0d48a; }
+.ullm-badge-error { background: var(--ullm-error-bg); color: var(--ullm-error-fg); border-color: #f3b7b0; }
+.ullm-badge-muted { background: var(--ullm-muted-bg); color: var(--ullm-muted-fg); border-color: var(--ullm-border); }
+
+.text-success { color: var(--ullm-success-fg); }
+.text-warning { color: var(--ullm-warning-fg); }
+.text-error { color: var(--ullm-error-fg); }
+.text-muted { color: var(--ullm-muted-fg); }
+.ullm-mono { font-family: var(--ullm-mono); font-size: 12.5px; word-break: break-all; }
+
+/* ------------------------------ 表单 ------------------------------ */
+.ullm-field { margin-bottom: 14px; }
+.ullm-field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.ullm-input, .ullm-select, .ullm-textarea {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: var(--ullm-text);
+  background: var(--ullm-bg);
+  border: 1px solid var(--ullm-border);
+  border-radius: 6px;
+}
+.ullm-textarea { min-height: 96px; resize: vertical; font-family: var(--ullm-mono); }
+.ullm-input:focus, .ullm-select:focus, .ullm-textarea:focus {
+  outline: none;
+  border-color: var(--ullm-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+.ullm-inline { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.ullm-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; }
+.ullm-hint { font-size: 12px; color: var(--ullm-muted-fg); margin-top: 4px; }
+
+/* ------------------------------ 空 / 加载 / 错误 ------------------------------ */
+.ullm-empty {
+  text-align: center;
+  padding: 48px 20px;
+  border: 1px dashed var(--ullm-border);
+  border-radius: var(--ullm-radius);
+  background: var(--ullm-bg);
+  color: var(--ullm-muted-fg);
+}
+.ullm-empty-icon { font-size: 34px; line-height: 1; margin-bottom: 10px; }
+.ullm-empty-title { font-size: 15px; font-weight: 600; color: var(--ullm-text); margin-bottom: 6px; }
+.ullm-empty-desc { font-size: 13px; margin-bottom: 16px; }
+
+.ullm-loading { padding: 28px; text-align: center; color: var(--ullm-muted-fg); }
+
+.ullm-errorbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border-radius: var(--ullm-radius);
+  background: var(--ullm-error-bg);
+  color: var(--ullm-error-fg);
+  border: 1px solid #f3b7b0;
+  font-size: 13px;
+}
+.ullm-errorbar-msg { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+
+/* ------------------------------ 弹层 ------------------------------ */
+.ullm-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 35, 40, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 16px;
+  z-index: 60;
+}
+.ullm-modal {
+  width: 100%;
+  max-width: 520px;
+  background: var(--ullm-bg);
+  border-radius: var(--ullm-radius);
+  box-shadow: 0 8px 28px rgba(31, 35, 40, 0.24);
+  overflow: hidden;
+}
+.ullm-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ullm-border);
+  font-size: 15px;
+  font-weight: 600;
+}
+.ullm-modal-body { padding: 18px; max-height: 62vh; overflow: auto; }
+.ullm-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--ullm-border);
+  background: var(--ullm-muted-bg);
+}
+.ullm-modal-close { border: none; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--ullm-muted-fg); }
+
+/* ------------------------------ 指标卡 ------------------------------ */
+.ullm-metric-value { font-size: 24px; font-weight: 600; font-family: var(--ullm-mono); }
+.ullm-metric-sub { font-size: 12px; color: var(--ullm-muted-fg); margin-top: 6px; }
+.ullm-unavailable {
+  background: var(--ullm-muted-bg);
+  border: 1px dashed var(--ullm-border);
+  border-radius: var(--ullm-radius);
+  padding: 14px;
+  color: var(--ullm-muted-fg);
+}
+.ullm-unavailable .ullm-unavailable-title { font-size: 15px; font-weight: 600; color: var(--ullm-muted-fg); }
+.ullm-unavailable .ullm-unavailable-row { font-size: 12.5px; margin-top: 6px; }
+
+/* ------------------------------ 进度条 ------------------------------ */
+.ullm-progress {
+  height: 10px;
+  background: var(--ullm-muted-bg);
+  border: 1px solid var(--ullm-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.ullm-progress > span { display: block; height: 100%; background: var(--ullm-primary); }
+
+/* ------------------------------ Toast ------------------------------ */
+#app-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 80;
+  max-width: 360px;
+}
+.ullm-toast {
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  box-shadow: 0 4px 14px rgba(31, 35, 40, 0.18);
+  transition: opacity 0.3s, transform 0.3s;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ullm-toast-out { opacity: 0; transform: translateY(6px); }
+
+/* ------------------------------ 登录页 ------------------------------ */
+.ullm-login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--ullm-muted-bg);
+}
+.ullm-login-box { width: 100%; max-width: 420px; }
+.ullm-login-head { text-align: center; margin-bottom: 22px; }
+.ullm-login-title { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+.ullm-login-sub { font-size: 13px; color: var(--ullm-muted-fg); margin: 0; }
+.ullm-login-hint { margin-top: 16px; font-size: 12.5px; color: var(--ullm-muted-fg); text-align: center; line-height: 1.7; }
+.ullm-login-error { margin-top: 12px; font-size: 13px; color: var(--ullm-error-fg); min-height: 18px; }
+
+/* ------------------------------ 代码块 ------------------------------ */
+.ullm-pre {
+  background: var(--ullm-muted-bg);
+  border: 1px solid var(--ullm-border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: var(--ullm-mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* ------------------------------ 响应式 ------------------------------ */
+@media (max-width: 768px) {
+  .ullm-grid-4, .ullm-grid-3, .ullm-grid-2 { grid-template-columns: 1fr; }
+  .ullm-layout { flex-direction: column; }
+  #app-sidebar {
+    width: 100%;
+    flex: 0 0 auto;
+    min-height: 0;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid var(--ullm-border);
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px;
+  }
+  .ullm-nav-item { margin-bottom: 0; }
+  .ullm-content { padding: 16px; }
+}

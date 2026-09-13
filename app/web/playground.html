@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>推理试验台 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="playground">
+  <div id="app-topbar"></div>
+  <div class="ullm-layout">
+    <nav id="app-sidebar"></nav>
+    <main class="ullm-content">
+      <div id="app-banner"></div>
+      <div id="page-content">
+        <div class="ullm-page-head">
+          <h2 class="ullm-page-title">推理试验台</h2>
+        </div>
+
+        <div class="ullm-grid ullm-grid-2">
+          <div class="ullm-card">
+            <h3 class="ullm-section-title">参数</h3>
+            <div class="ullm-field">
+              <label>模式</label>
+              <div class="ullm-inline">
+                <label class="ullm-checkbox"><input type="radio" name="mode" value="chat" checked> 对话</label>
+                <label class="ullm-checkbox"><input type="radio" name="mode" value="completion"> 文本补全</label>
+              </div>
+            </div>
+            <div class="ullm-field">
+              <label for="p-temp">temperature</label>
+              <input class="ullm-input" id="p-temp" type="number" step="0.1" min="0" max="2" value="0.7">
+            </div>
+            <div class="ullm-field">
+              <label for="p-topp">top_p</label>
+              <input class="ullm-input" id="p-topp" type="number" step="0.05" min="0" max="1" value="0.9">
+            </div>
+            <div class="ullm-field">
+              <label for="p-max">max_tokens</label>
+              <input class="ullm-input" id="p-max" type="number" min="1" step="1" value="512">
+            </div>
+          </div>
+
+          <div class="ullm-card">
+            <h3 class="ullm-section-title">模型</h3>
+            <div class="ullm-field">
+              <label for="model-select">选择模型</label>
+              <select class="ullm-select" id="model-select"><option>加载中…</option></select>
+              <div class="ullm-hint" id="model-note"></div>
+            </div>
+            <div class="ullm-hint">模型列表来自 <span class="ullm-mono">/v1/models</span>：
+              「已注册」是注册表中的真实条目；「配置默认（未注册）」是配置里的默认名。</div>
+          </div>
+        </div>
+
+        <div class="ullm-card" style="margin-top:16px;">
+          <h3 class="ullm-section-title">输入</h3>
+          <div class="ullm-field">
+            <textarea class="ullm-textarea" id="prompt-input" placeholder="请用一句话介绍你自己"></textarea>
+          </div>
+          <div class="ullm-inline" style="justify-content:space-between;">
+            <span class="ullm-hint">stream 固定关闭（后端不支持流式输出）</span>
+            <button type="button" class="ullm-btn ullm-btn-primary" id="send-btn">发送</button>
+          </div>
+        </div>
+
+        <div id="pg-error" style="margin-top:14px;"></div>
+
+        <div class="ullm-card" style="margin-top:16px;">
+          <h3 class="ullm-section-title">输出</h3>
+          <div id="output-area"><div class="ullm-hint">尚未发起推理。</div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var sendBtn = document.getElementById('send-btn');
+      var outputEl = document.getElementById('output-area');
+      var errEl = document.getElementById('pg-error');
+
+      function numInput(id, fallback) {
+        var v = parseFloat(document.getElementById(id).value);
+        return isFinite(v) ? v : fallback;
+      }
+
+      function currentMode() {
+        var radios = document.getElementsByName('mode');
+        for (var i = 0; i < radios.length; i++) { if (radios[i].checked) { return radios[i].value; } }
+        return 'chat';
+      }
+
+      function loadModels() {
+        var sel = document.getElementById('model-select');
+        return API.get('/v1/models').then(function (payload) {
+          var data = (payload && payload.data) || [];
+          if (data.length === 0) {
+            sel.innerHTML = '<option value="">（无可用模型）</option>';
+            document.getElementById('model-note').textContent = '未注册任何模型，且配置中没有默认模型。';
+            return;
+          }
+          var html = '';
+          for (var i = 0; i < data.length; i++) {
+            var m = data[i];
+            var registered = !m.note;
+            var label = m.id + (registered ? '（已注册）' : '（配置默认，未注册）');
+            html += '<option value="' + Layout.esc(m.id) + '"' +
+                    ' data-note="' + Layout.esc(m.note || '') + '">' + Layout.esc(label) + '</option>';
+          }
+          sel.innerHTML = html;
+          updateModelNote();
+        }).catch(function (err) {
+          sel.innerHTML = '<option value="">（读取失败）</option>';
+          Layout.renderError(errEl, err, loadModels);
+        });
+      }
+
+      function updateModelNote() {
+        var sel = document.getElementById('model-select');
+        var opt = sel.options[sel.selectedIndex];
+        var note = opt ? opt.getAttribute('data-note') : '';
+        document.getElementById('model-note').textContent = note
+          ? ('该模型为配置默认值，尚未注册：' + note)
+          : '该模型已注册。';
+      }
+
+      function backendBadge(backend) {
+        if (backend === 'mock') { return '<span class="ullm-badge ullm-badge-warning">占位</span>'; }
+        if (backend === 'vllm') { return '<span class="ullm-badge ullm-badge-success">真实</span>'; }
+        if (backend) { return '<span class="ullm-badge ullm-badge-muted">' + Layout.esc(backend) + '</span>'; }
+        return '<span class="ullm-badge ullm-badge-muted">后端未知</span>';
+      }
+
+      function renderOutput(payload, text, latencyMs) {
+        var backend = payload ? payload.backend : null;
+        var tokens = payload && payload.usage ? Layout.asNumber(payload.usage.total_tokens) : null;
+        var isMock = backend === 'mock';
+        var html = '';
+        if (isMock) {
+          html += '<div class="ullm-banner ullm-warning" role="alert">' +
+            '<strong>⚠ 当前为占位后端（mock），以下为确定性占位文本，非真实模型输出。</strong></div>';
+        }
+        html += '<div class="ullm-inline" style="margin-bottom:8px;">' +
+          '<span>后端：' + backendBadge(backend) + '</span>' +
+          '<span class="ullm-stat-label">tokens：' + (tokens === null ? '未知' : tokens) + '</span>' +
+          '<span class="ullm-stat-label">客户端往返耗时：' + (latencyMs === null ? '未知' : (latencyMs + ' ms')) + '</span>' +
+        '</div>';
+        html += '<pre class="ullm-pre">' + Layout.esc(text) + '</pre>';
+        outputEl.innerHTML = html;
+      }
+
+      function doSend() {
+        errEl.innerHTML = '';
+        var prompt = (document.getElementById('prompt-input').value || '').trim();
+        if (!prompt) {
+          Layout.renderError(errEl, { detail: '请输入内容后再发送' });
+          return;
+        }
+        var model = document.getElementById('model-select').value;
+        var maxTokens = parseInt(document.getElementById('p-max').value, 10);
+        if (!isFinite(maxTokens) || maxTokens <= 0) { maxTokens = 512; }
+        var payload = {
+          model: model,
+          temperature: numInput('p-temp', 0.7),
+          top_p: numInput('p-topp', 0.9),
+          max_tokens: maxTokens,
+          stream: false
+        };
+        var mode = currentMode();
+        var url;
+        if (mode === 'chat') {
+          url = '/v1/chat/completions';
+          payload.messages = [{ role: 'user', content: prompt }];
+        } else {
+          url = '/v1/completions';
+          payload.prompt = prompt;
+        }
+
+        Layout.setBusy(sendBtn, true, '推理中…');
+        var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+        API.post(url, payload).then(function (res) {
+          var elapsed = ((window.performance && performance.now) ? performance.now() : Date.now()) - t0;
+          var choice = (res && res.choices && res.choices[0]) || null;
+          var text = '';
+          if (choice) {
+            text = choice.message ? (choice.message.content || '') : (choice.text || '');
+          }
+          Layout.setBusy(sendBtn, false);
+          renderOutput(res, text, Math.round(elapsed));
+        }).catch(function (err) {
+          Layout.setBusy(sendBtn, false);
+          var detail = (err && err.detail) ? err.detail : '';
+          if (detail.indexOf('stream') >= 0) { detail = '暂不支持流式输出：' + detail; }
+          Layout.renderError(errEl, { detail: detail || '推理失败' }, doSend);
+          outputEl.innerHTML = '<div class="ullm-hint">未获得输出。</div>';
+        });
+      }
+
+      document.getElementById('model-select').addEventListener('change', updateModelNote);
+      sendBtn.addEventListener('click', doSend);
+
+      Layout.boot(loadModels);
+    })();
+  </script>
+</body>
+</html>

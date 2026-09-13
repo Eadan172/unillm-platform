@@ -1,0 +1,38 @@
+# 构建镜像时排除的内容。
+# 关键：绝不把运行期数据（含自动生成的访问 Token）打进镜像。
+
+.git
+.gitignore
+.gitattributes
+
+# Python 缓存与编译产物
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# 虚拟环境
+.venv
+venv
+env
+ENV
+
+# 运行期数据与日志（含 data/.api_token —— 密钥！）
+data
+logs
+
+# 文档与测试（镜像内不需要）
+docs
+tests
+*.md
+!README.md
+
+# 编辑器 / 系统
+.idea
+.vscode
+.DS_Store
+*.swp
+*~

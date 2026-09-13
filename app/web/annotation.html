@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>标注 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="annotation">
+  <div id="app-topbar"></div>
+  <div class="ullm-layout">
+    <nav id="app-sidebar"></nav>
+    <main class="ullm-content">
+      <div id="app-banner"></div>
+      <div id="page-content">
+        <div class="ullm-page-head">
+          <h2 class="ullm-page-title">标注</h2>
+          <button type="button" class="ullm-btn ullm-btn-primary" id="new-task-btn">+ 新建标注任务</button>
+        </div>
+
+        <div id="an-error"></div>
+
+        <div class="ullm-card">
+          <h3 class="ullm-section-title">标注任务</h3>
+          <div id="task-body"><div class="ullm-hint">加载中…</div></div>
+        </div>
+
+        <div id="workbench" style="margin-top:16px;"></div>
+      </div>
+    </main>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var taskBody = document.getElementById('task-body');
+      var workbench = document.getElementById('workbench');
+      var errEl = document.getElementById('an-error');
+      var currentTaskId = null;
+      var currentItem = null;
+
+      function statusBadge(status) {
+        var s = status || '未知';
+        var cls = s === 'completed' ? 'ullm-badge-success'
+                : s === 'in_progress' ? 'ullm-badge-warning' : 'ullm-badge-muted';
+        return '<span class="ullm-badge ' + cls + '">' + Layout.esc(s) + '</span>';
+      }
+
+      function loadTasks() {
+        Layout.renderLoading(taskBody, '正在加载标注任务…');
+        return API.get('/api/annotation/task/list').then(function (list) {
+          if (!list || list.length === 0) {
+            Layout.renderEmpty(taskBody, {
+              icon: '🏷', title: '还没有标注任务',
+              desc: '为一个数据集新建标注任务，即可在下方工作台逐条补全答案',
+              actionLabel: '+ 新建标注任务', onAction: openNewTask
+            });
+            return;
+          }
+          var rows = '';
+          for (var i = 0; i < list.length; i++) {
+            var t = list[i];
+            rows += '<tr>' +
+              '<td class="ullm-nowrap">' + Layout.esc(t.id) + '</td>' +
+              '<td>' + Layout.esc(t.name) + '</td>' +
+              '<td class="ullm-nowrap">' + Layout.esc(t.dataset_id) + '</td>' +
+              '<td class="ullm-nowrap">' + Layout.esc(Layout.numOrUnknown(t.completed_items)) +
+                ' / ' + Layout.esc(Layout.numOrUnknown(t.total_items)) + '</td>' +
+              '<td class="ullm-nowrap">' + statusBadge(t.status) + '</td>' +
+              '<td><button type="button" class="ullm-btn ullm-btn-primary ullm-btn-sm" data-action="open" data-id="' + Layout.esc(t.id) + '">进入标注</button></td>' +
+            '</tr>';
+          }
+          taskBody.innerHTML =
+            '<div class="ullm-table-wrap"><table class="ullm-table">' +
+              '<thead><tr><th>ID</th><th>名称</th><th>数据集</th><th>已完成/总数</th><th>状态</th><th>操作</th></tr></thead>' +
+              '<tbody>' + rows + '</tbody></table></div>';
+        }).catch(function (err) {
+          Layout.renderError(taskBody, err, loadTasks);
+        });
+      }
+
+      function openNewTask() {
+        var body = document.createElement('div');
+        body.innerHTML =
+          '<div class="ullm-field"><label for="nt-name">任务名称</label>' +
+            '<input class="ullm-input" id="nt-name" placeholder="例如：客服问答标注"></div>' +
+          '<div class="ullm-field"><label for="nt-dataset">数据集</label>' +
+            '<select class="ullm-select" id="nt-dataset"><option value="">加载中…</option></select></div>' +
+          '<div class="ullm-hint">任务将包含该数据集当前的全部样本；已带答案的样本自动计为已完成。</div>' +
+          '<div id="nt-error"></div>';
+        var modalRef = Layout.modal({
+          title: '新建标注任务',
+          bodyNode: body,
+          actions: [
+            { label: '取消' },
+            { label: '创建', primary: true, keepOpen: true, onClick: function (ctx) { doCreate(ctx); return false; } }
+          ]
+        });
+        var dsSel = modalRef.body.querySelector('#nt-dataset');
+        var errBox = modalRef.body.querySelector('#nt-error');
+
+        API.get('/api/data/list').then(function (list) {
+          list = list || [];
+          if (list.length === 0) {
+            dsSel.innerHTML = '<option value="">（无数据集，请先在「数据集」页导入）</option>';
+            return;
+          }
+          var html = '';
+          for (var i = 0; i < list.length; i++) {
+            html += '<option value="' + Layout.esc(list[i].id) + '">' +
+                    Layout.esc(list[i].name + ' (' + Layout.numOrUnknown(list[i].total_samples) + ')') + '</option>';
+          }
+          dsSel.innerHTML = html;
+        }).catch(function (err) {
+          Layout.renderError(errBox, err);
+        });
+
+        function doCreate(ctx) {
+          errBox.innerHTML = '';
+          var name = (modalRef.body.querySelector('#nt-name').value || '').trim();
+          var dsId = dsSel.value;
+          if (!name) { Layout.renderError(errBox, { detail: '请填写任务名称' }); return; }
+          if (!dsId) { Layout.renderError(errBox, { detail: '请选择数据集' }); return; }
+          Layout.setBusy(ctx.btn, true, '创建中…');
+          API.post('/api/annotation/task', {
+            name: name, dataset_id: parseInt(dsId, 10), annotation_type: 'text'
+          }).then(function (task) {
+            Layout.setBusy(ctx.btn, false);
+            ctx.close();
+            Layout.toast('已创建标注任务', 'success');
+            loadTasks();
+            if (task && task.id) { selectTask(task.id); }
+          }).catch(function (err) {
+            Layout.setBusy(ctx.btn, false);
+            Layout.renderError(errBox, err);
+          });
+        }
+      }
+
+      function selectTask(id) {
+        currentTaskId = id;
+        workbench.innerHTML = '<div class="ullm-hint">正在加载工作台…</div>';
+        return Promise.all([
+          API.get('/api/annotation/task/' + id + '/progress'),
+          API.get('/api/annotation/task/' + id + '/items?status=pending&limit=200').catch(function () { return []; })
+        ]).then(function (res) {
+          renderWorkbench(id, res[0], res[1] || []);
+        }).catch(function (err) {
+          Layout.renderError(workbench, err, function () { selectTask(id); });
+        });
+      }
+
+      function renderWorkbench(id, progress, pendingItems) {
+        var total = Layout.asNumber(progress ? progress.total : null);
+        var completed = Layout.asNumber(progress ? progress.completed : null);
+        var pending = Layout.asNumber(progress ? progress.pending : null);
+        var pct = Layout.asNumber(progress ? progress.progress : null);
+        var pctText = pct === null ? '未知' : (pct + '%');
+        var barWidth = pct === null ? 0 : Math.max(0, Math.min(100, pct));
+
+        var head =
+          '<div class="ullm-card">' +
+            '<div class="ullm-page-head">' +
+              '<h3 class="ullm-section-title" style="margin:0;">标注工作台 · 任务 #' + Layout.esc(id) + '</h3>' +
+              '<button type="button" class="ullm-btn ullm-btn-sm" id="wb-reload">刷新</button>' +
+            '</div>' +
+            '<div class="ullm-inline" style="justify-content:space-between;margin-bottom:8px;">' +
+              '<span class="ullm-stat-label">进度 ' + Layout.esc(completed === null ? '未知' : completed) +
+                ' / ' + Layout.esc(total === null ? '未知' : total) + '（' + Layout.esc(pctText) + '）</span>' +
+              '<span class="ullm-stat-label">待标注：' + Layout.esc(pending === null ? '未知' : pending) + '</span>' +
+            '</div>' +
+            '<div class="ullm-progress"><span style="width:' + barWidth + '%;"></span></div>' +
+          '</div>';
+
+        workbench.innerHTML = head + '<div id="wb-current" style="margin-top:16px;"></div>';
+        document.getElementById('wb-reload').addEventListener('click', function () { selectTask(id); });
+        loadNext(id);
+      }
+
+      function loadNext(id) {
+        var host = document.getElementById('wb-current');
+        if (!host) { return; }
+        Layout.renderLoading(host, '正在获取下一条待标注样本…');
+        API.get('/api/annotation/task/' + id + '/next').then(function (item) {
+          if (!item || item.status === 'completed') {
+            currentItem = null;
+            host.innerHTML = '<div class="ullm-empty">' +
+              '<div class="ullm-empty-icon">✅</div>' +
+              '<div class="ullm-empty-title">已完成全部标注</div>' +
+              '<div class="ullm-empty-desc">该任务没有待标注样本了。可到「数据集」页导出训练集。</div></div>';
+            return;
+          }
+          currentItem = item;
+          renderCurrent(host, item);
+        }).catch(function (err) {
+          Layout.renderError(host, err, function () { loadNext(id); });
+        });
+      }
+
+      function renderCurrent(host, item) {
+        host.innerHTML =
+          '<div class="ullm-card">' +
+            '<div class="ullm-field"><div class="ullm-stat-label">instruction</div>' +
+              '<div>' + Layout.esc(item.instruction || '—') + '</div></div>' +
+            '<div class="ullm-field"><div class="ullm-stat-label">input</div>' +
+              '<div>' + Layout.esc(item.input_text || '（空）') + '</div></div>' +
+            '<div class="ullm-field"><label for="wb-output">output（参考答案）</label>' +
+              '<textarea class="ullm-textarea" id="wb-output" placeholder="请输入该样本的正确答案"></textarea></div>' +
+            '<div id="wb-error"></div>' +
+            '<div class="ullm-actions" style="justify-content:flex-end;">' +
+              '<button type="button" class="ullm-btn ullm-btn-primary" id="wb-submit" disabled>提交并下一条</button>' +
+            '</div>' +
+          '</div>';
+
+        var ta = document.getElementById('wb-output');
+        var btn = document.getElementById('wb-submit');
+        var errBox = document.getElementById('wb-error');
+        ta.focus();
+
+        // 前端拦截空答案：空值时禁用提交
+        ta.addEventListener('input', function () {
+          btn.disabled = (ta.value || '').trim().length === 0;
+        });
+
+        btn.addEventListener('click', function () {
+          var text = (ta.value || '').trim();
+          if (!text) { return; }
+          errBox.innerHTML = '';
+          Layout.setBusy(btn, true, '提交中…');
+          API.post('/api/annotation/submit?annotation_id=' + item.id, {
+            output_text: text, status: 'completed'
+          }).then(function () {
+            Layout.setBusy(btn, false);
+            Layout.toast('已提交，进入下一条', 'success');
+            selectTask(currentTaskId);
+            loadTasks();
+          }).catch(function (err) {
+            Layout.setBusy(btn, false);
+            Layout.renderError(errBox, err);
+          });
+        });
+      }
+
+      taskBody.addEventListener('click', function (e) {
+        var target = e.target.closest ? e.target.closest('[data-action="open"]') : null;
+        if (!target) { return; }
+        selectTask(target.getAttribute('data-id'));
+      });
+
+      document.getElementById('new-task-btn').addEventListener('click', openNewTask);
+
+      Layout.boot(loadTasks);
+    })();
+  </script>
+</body>
+</html>

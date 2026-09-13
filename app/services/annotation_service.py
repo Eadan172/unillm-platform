@@ -1,8 +1,7 @@
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from datetime import datetime
 
-from app.models.database import Annotation, AnnotationTask, Dataset
+from app.models.database import Annotation, AnnotationTask, Dataset, utcnow
 from app.models.schemas import AnnotationStatus
 
 
@@ -55,7 +54,7 @@ class AnnotationService:
         annotation.output_text = output_text
         annotation.status = AnnotationStatus.COMPLETED.value
         annotation.annotator = annotator
-        annotation.updated_at = datetime.utcnow()
+        annotation.updated_at = utcnow()
 
         if annotation.task_id:
             task = self.db.query(AnnotationTask).filter(

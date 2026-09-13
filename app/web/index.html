@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>总览 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="index">
+  <div id="app-topbar"></div>
+  <div class="ullm-layout">
+    <nav id="app-sidebar"></nav>
+    <main class="ullm-content">
+      <div id="app-banner"></div>
+      <div id="page-content">
+        <div class="ullm-page-head">
+          <h2 class="ullm-page-title">总览</h2>
+        </div>
+
+        <div id="index-error"></div>
+        <div class="ullm-grid ullm-grid-4" id="stat-cards"></div>
+
+        <div class="ullm-card" style="margin-top:16px;">
+          <h3 class="ullm-section-title">快捷入口</h3>
+          <div class="ullm-actions">
+            <a class="ullm-btn ullm-btn-primary" href="datasets.html">+ 导入数据集</a>
+            <a class="ullm-btn" href="models.html">注册模型</a>
+            <a class="ullm-btn" href="playground.html">打开推理试验台</a>
+            <a class="ullm-btn" href="evaluate.html">新建评测</a>
+          </div>
+        </div>
+
+        <div class="ullm-card" style="margin-top:16px;">
+          <h3 class="ullm-section-title">服务信息</h3>
+          <div id="service-info">
+            <div class="ullm-hint">加载中…</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      function card(label, value, sub, valueClass) {
+        return '<div class="ullm-card">' +
+          '<div class="ullm-stat-label">' + Layout.esc(label) + '</div>' +
+          '<div class="ullm-stat-value ' + (valueClass || '') + '">' + Layout.esc(value) + '</div>' +
+          '<div class="ullm-stat-sub">' + Layout.esc(sub || '') + '</div>' +
+        '</div>';
+      }
+
+      function renderCards(health, datasets) {
+        var host = document.getElementById('stat-cards');
+        var envValue, envClass, envSub;
+        if (!health) {
+          envValue = '未知'; envClass = 'text-muted'; envSub = '无法获取 /health';
+        } else if (health.inference_backend_is_real_model === true) {
+          envValue = '真实后端'; envClass = 'text-success';
+          envSub = '(' + (health.inference_backend || '未知') + ')';
+        } else {
+          envValue = '占位后端'; envClass = 'text-warning';
+          envSub = '(' + (health.inference_backend || '未知') + ')';
+        }
+
+        var registered = health ? Layout.numOrUnknown(health.registered_models) : '未知';
+        var loaded = health ? Layout.numOrUnknown(health.models_loaded) : '未知';
+        var datasetCount = (datasets !== null && datasets !== undefined) ? String(datasets.length) : '未知';
+
+        host.innerHTML =
+          card('运行环境', envValue, envSub, envClass) +
+          card('已注册模型', registered, '来自 /health.registered_models') +
+          card('已加载模型', loaded, '来自 /health.models_loaded') +
+          card('数据集', datasetCount, datasets === null ? '无法获取 /api/data/list' : '来自 /api/data/list');
+      }
+
+      function renderServiceInfo(health) {
+        var host = document.getElementById('service-info');
+        if (!health) {
+          host.innerHTML = '<div class="ullm-hint">无法获取服务信息（/health 不可达）。</div>';
+          return;
+        }
+        var version = health.version ? Layout.esc(health.version) : '未知';
+        var database = health.database ? Layout.esc(health.database) : '未知';
+        var status = health.status ? Layout.esc(health.status) : '未知';
+        var degraded = health.degraded === true;
+        host.innerHTML =
+          '<div class="ullm-inline">' +
+            '<div><span class="ullm-stat-label">版本</span> <span class="ullm-mono">' + version + '</span></div>' +
+            '<div><span class="ullm-stat-label">数据库</span> <span class="ullm-mono">' + database + '</span></div>' +
+            '<div><span class="ullm-stat-label">状态</span> ' +
+              '<span class="ullm-badge ' + (degraded ? 'ullm-badge-warning' : 'ullm-badge-success') + '">' +
+              status + (degraded ? '（降级）' : '') + '</span>' +
+            '</div>' +
+          '</div>';
+      }
+
+      Layout.boot(function () {
+        var errBox = document.getElementById('index-error');
+        return Promise.all([
+          API.get('/health').then(function (h) { return { ok: true, data: h }; },
+                                 function (e) { return { ok: false, error: e }; }),
+          API.get('/api/data/list').then(function (l) { return { ok: true, data: l }; },
+                                        function (e) { return { ok: false, error: e }; })
+        ]).then(function (res) {
+          var health = res[0].ok ? res[0].data : null;
+          var datasets = res[1].ok ? res[1].data : null;
+          renderCards(health, datasets);
+          renderServiceInfo(health);
+
+          // 数据集列表失败才提示（/health 是公开端点，一般不会失败）
+          if (!res[1].ok) {
+            Layout.renderError(errBox, res[1].error, function () { location.reload(); });
+          } else {
+            errBox.innerHTML = '';
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

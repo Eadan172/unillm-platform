@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>数据集 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="datasets">
+  <div id="app-topbar"></div>
+  <div class="ullm-layout">
+    <nav id="app-sidebar"></nav>
+    <main class="ullm-content">
+      <div id="app-banner"></div>
+      <div id="page-content">
+        <div class="ullm-page-head">
+          <h2 class="ullm-page-title">数据集</h2>
+          <div class="ullm-actions">
+            <button type="button" class="ullm-btn" id="new-empty-btn">+ 新建空数据集</button>
+            <button type="button" class="ullm-btn ullm-btn-primary" id="import-btn">+ 导入数据</button>
+          </div>
+        </div>
+        <div id="datasets-error"></div>
+        <div id="datasets-body"></div>
+      </div>
+    </main>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var ALLOWED = ['json', 'jsonl', 'csv'];
+      var MAX_BYTES = 100 * 1024 * 1024;
+      var currentList = [];
+      var taskList = [];
+
+      var bodyEl = document.getElementById('datasets-body');
+      var errEl = document.getElementById('datasets-error');
+
+      function extOf(name) {
+        var i = String(name || '').lastIndexOf('.');
+        return i >= 0 ? String(name).slice(i + 1).toLowerCase() : '';
+      }
+
+      function safeName(name, fallback) {
+        var n = String(name || '').replace(/[\\/:*?"<>|\r\n]+/g, '_').trim();
+        return n || fallback || 'dataset';
+      }
+
+      function load() {
+        Layout.renderLoading(bodyEl, '正在加载数据集…');
+        errEl.innerHTML = '';
+        return Promise.all([
+          API.get('/api/data/list'),
+          API.get('/api/annotation/task/list').catch(function () { return []; })
+        ]).then(function (res) {
+          currentList = res[0] || [];
+          taskList = res[1] || [];
+          renderList(currentList);
+        }).catch(function (err) {
+          Layout.renderError(errEl, err, load);
+          bodyEl.innerHTML = '';
+        });
+      }
+
+      function labelProgress(datasetId) {
+        var totals = [], completeds = [], found = false;
+        for (var i = 0; i < taskList.length; i++) {
+          if (taskList[i].dataset_id === datasetId) {
+            found = true;
+            totals.push(taskList[i].total_items);
+            completeds.push(taskList[i].completed_items);
+          }
+        }
+        if (!found) { return null; }
+        return {
+          total: Layout.sumOrUnknown(totals),
+          completed: Layout.sumOrUnknown(completeds)
+        };
+      }
+
+      function renderList(list) {
+        if (!list || list.length === 0) {
+          Layout.renderEmpty(bodyEl, {
+            icon: '🗂',
+            title: '还没有任何数据集',
+            desc: '导入一份 json / jsonl / csv 开始吧',
+            actionLabel: '+ 导入数据',
+            onAction: openImport
+          });
+          return;
+        }
+        var rows = '';
+        for (var i = 0; i < list.length; i++) {
+          var d = list[i];
+          rows += '<tr>' +
+            '<td class="ullm-nowrap">' + Layout.esc(d.id) + '</td>' +
+            '<td>' + Layout.esc(d.name) + '</td>' +
+            '<td class="ullm-nowrap">' + Layout.esc(Layout.numOrUnknown(d.total_samples)) + '</td>' +
+            '<td class="ullm-nowrap">' + Layout.esc(d.source_type || '未知') + '</td>' +
+            '<td class="ullm-nowrap">' + Layout.esc(Layout.fmtDate(d.created_at)) + '</td>' +
+            '<td><div class="ullm-actions">' +
+              '<button type="button" class="ullm-btn btn-link ullm-btn-sm" data-action="detail" data-id="' + Layout.esc(d.id) + '">详情</button>' +
+              '<button type="button" class="ullm-btn ullm-btn-sm" data-action="export" data-id="' + Layout.esc(d.id) + '">导出</button>' +
+              '<button type="button" class="ullm-btn ullm-btn-danger ullm-btn-sm" data-action="delete" data-id="' + Layout.esc(d.id) + '">删除</button>' +
+            '</div></td>' +
+          '</tr>';
+        }
+        bodyEl.innerHTML =
+          '<div class="ullm-card" style="padding:0;">' +
+            '<div class="ullm-table-wrap"><table class="ullm-table">' +
+              '<thead><tr><th>ID</th><th>名称</th><th>样本数</th><th>来源</th><th>创建时间</th><th>操作</th></tr></thead>' +
+              '<tbody>' + rows + '</tbody>' +
+            '</table></div>' +
+          '</div>';
+      }
+
+      function findDataset(id) {
+        for (var i = 0; i < currentList.length; i++) {
+          if (String(currentList[i].id) === String(id)) { return currentList[i]; }
+        }
+        return null;
+      }
+
+      function openImport() {
+        var body = document.createElement('div');
+        body.innerHTML =
+          '<div class="ullm-field"><label for="imp-name">数据集名称</label>' +
+            '<input class="ullm-input" id="imp-name" placeholder="例如：客服问答"></div>' +
+          '<div class="ullm-field"><label for="imp-desc">描述（选填）</label>' +
+            '<input class="ullm-input" id="imp-desc" placeholder="这批数据是什么"></div>' +
+          '<div class="ullm-field"><label for="imp-file">文件</label>' +
+            '<input class="ullm-input" id="imp-file" type="file" accept=".json,.jsonl,.csv"></div>' +
+          '<div class="ullm-hint">支持 .json / .jsonl / .csv；单文件上限 100MB。</div>' +
+          '<div id="imp-error"></div>';
+
+        var modalRef = Layout.modal({
+          title: '导入数据集',
+          bodyNode: body,
+          actions: [
+            { label: '取消' },
+            { label: '上传并导入', primary: true, keepOpen: true, onClick: function (ctx) { doImport(ctx); return false; } }
+          ]
+        });
+
+        var fileInput = modalRef.body.querySelector('#imp-file');
+        var errBox = modalRef.body.querySelector('#imp-error');
+        var nameInput = modalRef.body.querySelector('#imp-name');
+        if (nameInput) { nameInput.focus(); }
+
+        function doImport(ctx) {
+          errBox.innerHTML = '';
+          var name = (nameInput.value || '').trim();
+          var desc = (modalRef.body.querySelector('#imp-desc').value || '').trim();
+          var file = fileInput.files && fileInput.files[0];
+          if (!name) { Layout.renderError(errBox, { detail: '请填写数据集名称' }); return; }
+          if (!file) { Layout.renderError(errBox, { detail: '请选择要上传的文件' }); return; }
+          var ext = extOf(file.name);
+          if (ALLOWED.indexOf(ext) < 0) {
+            Layout.renderError(errBox, { detail: "不支持的文件类型 '." + ext + "'，仅支持 json / jsonl / csv" });
+            return;
+          }
+          if (file.size > MAX_BYTES) {
+            Layout.renderError(errBox, { detail: '文件超过 100MB 上限' });
+            return;
+          }
+          var form = new FormData();
+          form.append('file', file);
+          var url = '/api/data/import?name=' + encodeURIComponent(name) +
+                    '&description=' + encodeURIComponent(desc);
+          Layout.setBusy(ctx.btn, true, '上传中…');
+          API.post(url, form, true).then(function () {
+            Layout.setBusy(ctx.btn, false);
+            ctx.close();
+            Layout.toast('导入成功', 'success');
+            load();
+          }).catch(function (err) {
+            Layout.setBusy(ctx.btn, false);
+            Layout.renderError(errBox, err);
+          });
+        }
+      }
+
+      function openCreateEmpty() {
+        var body = document.createElement('div');
+        body.innerHTML =
+          '<div class="ullm-field"><label for="new-name">数据集名称</label>' +
+            '<input class="ullm-input" id="new-name" placeholder="例如：待标注数据"></div>' +
+          '<div class="ullm-field"><label for="new-desc">描述（选填）</label>' +
+            '<input class="ullm-input" id="new-desc"></div>' +
+          '<div class="ullm-hint">创建空数据集后，可为其新建标注任务，或继续导入样本。</div>' +
+          '<div id="new-error"></div>';
+        var modalRef = Layout.modal({
+          title: '新建空数据集',
+          bodyNode: body,
+          actions: [
+            { label: '取消' },
+            { label: '创建', primary: true, keepOpen: true, onClick: function (ctx) { doCreate(ctx); return false; } }
+          ]
+        });
+        var errBox = modalRef.body.querySelector('#new-error');
+        var nameInput = modalRef.body.querySelector('#new-name');
+        if (nameInput) { nameInput.focus(); }
+
+        function doCreate(ctx) {
+          errBox.innerHTML = '';
+          var name = (nameInput.value || '').trim();
+          if (!name) { Layout.renderError(errBox, { detail: '请填写数据集名称' }); return; }
+          Layout.setBusy(ctx.btn, true, '创建中…');
+          API.post('/api/data/create', {
+            name: name,
+            description: (modalRef.body.querySelector('#new-desc').value || '').trim() || null,
+            source_type: 'file'
+          }).then(function () {
+            Layout.setBusy(ctx.btn, false);
+            ctx.close();
+            Layout.toast('已创建空数据集', 'success');
+            load();
+          }).catch(function (err) {
+            Layout.setBusy(ctx.btn, false);
+            Layout.renderError(errBox, err);
+          });
+        }
+      }
+
+      function openDetail(id) {
+        var d = findDataset(id);
+        var body = document.createElement('div');
+        if (!d) {
+          body.innerHTML = '<div class="ullm-hint">数据集不存在或已被删除。</div>';
+          Layout.modal({ title: '数据集详情', bodyNode: body });
+          return;
+        }
+        var prog = labelProgress(d.id);
+        var progressText = prog
+          ? ('已标注 ' + Layout.numOrUnknown(prog.completed) + ' / ' + Layout.numOrUnknown(prog.total) + '（来自标注任务统计）')
+          : '暂无标注任务（可在「标注」页为它新建任务）';
+        body.innerHTML =
+          '<div class="ullm-field"><div class="ullm-stat-label">ID</div><div class="ullm-mono">' + Layout.esc(d.id) + '</div></div>' +
+          '<div class="ullm-field"><div class="ullm-stat-label">名称</div><div>' + Layout.esc(d.name) + '</div></div>' +
+          '<div class="ullm-field"><div class="ullm-stat-label">描述</div><div>' + Layout.esc(d.description || '—') + '</div></div>' +
+          '<div class="ullm-field"><div class="ullm-stat-label">样本数</div><div>' + Layout.esc(Layout.numOrUnknown(d.total_samples)) + '</div></div>' +
+          '<div class="ullm-field"><div class="ullm-stat-label">来源</div><div>' + Layout.esc(d.source_type || '未知') + '</div></div>' +
+          '<div class="ullm-field"><div class="ullm-stat-label">创建时间</div><div>' + Layout.esc(Layout.fmtDate(d.created_at)) + '</div></div>' +
+          '<div class="ullm-field"><div class="ullm-stat-label">标注进度</div><div>' + Layout.esc(progressText) + '</div></div>';
+        Layout.modal({ title: '数据集详情', bodyNode: body });
+      }
+
+      function doExport(id) {
+        var d = findDataset(id);
+        var fname = safeName(d ? d.name : ('dataset_' + id), 'dataset_' + id) + '_training.jsonl';
+        errEl.innerHTML = '';
+        API.download('/api/data/' + id + '/export/download', fname).then(function () {
+          Layout.toast('已开始下载：' + fname, 'success');
+        }).catch(function (err) {
+          Layout.renderError(errEl, err, function () { doExport(id); });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      }
+
+      function doDelete(id) {
+        var d = findDataset(id);
+        var label = d ? d.name : ('#' + id);
+        if (!window.confirm('确认删除数据集「' + label + '」？该操作不可恢复，相关样本也会被删除。')) { return; }
+        API.del('/api/data/' + id).then(function () {
+          Layout.toast('已删除', 'success');
+          load();
+        }).catch(function (err) {
+          Layout.toast((err && err.detail) ? err.detail : '删除失败', 'error');
+        });
+      }
+
+      bodyEl.addEventListener('click', function (e) {
+        var target = e.target.closest ? e.target.closest('[data-action]') : null;
+        if (!target) { return; }
+        var action = target.getAttribute('data-action');
+        var id = target.getAttribute('data-id');
+        if (action === 'detail') { openDetail(id); }
+        else if (action === 'export') { doExport(id); }
+        else if (action === 'delete') { doDelete(id); }
+      });
+
+      document.getElementById('import-btn').addEventListener('click', openImport);
+      document.getElementById('new-empty-btn').addEventListener('click', openCreateEmpty);
+
+      Layout.boot(load);
+    })();
+  </script>
+</body>
+</html>

@@ -1,25 +1,31 @@
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
-sqlalchemy==2.0.25
-aiosqlite==0.19.0
-pandas==2.1.4
-pyarrow==15.0.0
-pyyaml==6.0.1
-python-multipart==0.0.6
-httpx==0.26.0
+# ==========================================================================
+# UniLLM Platform - 核心依赖（CPU-only，无需 GPU/CUDA）
+#
+#   pip install -r requirements.txt
+#
+# 适用于 Python 3.9 - 3.13。安装体积约 5 MB，可在任意机器上直接跑通
+# 数据接入 -> 标注 -> 微调任务 -> 评测 -> 推理 的完整闭环。
+#
+# GPU 增强（vLLM 真实推理 / PEFT LoRA 微调）为可选项，见 requirements-gpu.txt。
+# 未安装时平台自动降级为内置 mock 推理后端，并在响应中显式标注 backend=mock，
+# 不会把占位结果冒充为真实模型输出。
+# ==========================================================================
 
-vllm==0.3.0
-transformers==4.37.0
-peft==0.7.1
-accelerate==0.25.0
-bitsandbytes==0.41.3
-sentencepiece==0.1.99
-tiktoken==0.5.2
+# --- Web 框架 / HTTP 服务 ---
+fastapi>=0.109,<1.0
+uvicorn[standard]>=0.27,<1.0
+python-multipart>=0.0.6,<1.0
 
-torch==2.1.2
-datasets==2.16.1
-evaluate==0.4.1
-rouge-score==0.1.2
-nltk==3.8.1
+# --- 配置与数据校验 ---
+pydantic>=2.5,<3.0
+pydantic-settings>=2.1,<3.0
+pyyaml>=6.0.1,<7.0
+
+# --- 数据库（SQLite，纯本地零依赖） ---
+sqlalchemy>=2.0.25,<2.1
+
+# --- HTTP 客户端（示例脚本 / 测试） ---
+httpx>=0.26,<1.0
+
+# --- 测试 ---
+pytest>=8.0,<9.0

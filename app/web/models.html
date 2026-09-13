@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模型 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="models">
+  <div id="app-topbar"></div>
+  <div class="ullm-layout">
+    <nav id="app-sidebar"></nav>
+    <main class="ullm-content">
+      <div id="app-banner"></div>
+      <div id="page-content">
+        <div class="ullm-page-head">
+          <h2 class="ullm-page-title">模型</h2>
+          <div class="ullm-actions">
+            <button type="button" class="ullm-btn" id="unload-btn">卸载当前模型</button>
+            <button type="button" class="ullm-btn ullm-btn-primary" id="register-btn">+ 注册模型</button>
+          </div>
+        </div>
+
+        <div class="ullm-card" id="backend-card">
+          <div class="ullm-hint">正在读取推理后端状态…</div>
+        </div>
+        <div id="load-result" style="margin-top:14px;"></div>
+        <div id="models-error" style="margin-top:14px;"></div>
+        <div id="models-body" style="margin-top:14px;"></div>
+      </div>
+    </main>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var listEl = document.getElementById('models-body');
+      var errEl = document.getElementById('models-error');
+      var backendEl = document.getElementById('backend-card');
+      var resultEl = document.getElementById('load-result');
+
+      function renderBackend(info) {
+        if (!info) {
+          backendEl.innerHTML = '<div class="ullm-hint">无法读取 /api/model/backend。</div>';
+          return;
+        }
+        var real = info.is_real_model === true;
+        var badge = real
+          ? '<span class="ullm-badge ullm-badge-success">真实后端</span>'
+          : '<span class="ullm-badge ullm-badge-warning">占位后端</span>';
+        var backendName = info.backend ? info.backend : '未知';
+        var current = info.current_model ? info.current_model : '（未加载）';
+        var note = real
+          ? '当前为真实模型推理。'
+          : '说明：未安装 vLLM，已切换到确定性 mock 后端（占位输出，非模型）。';
+        var extra = '';
+        if (info.load_error) {
+          extra = '<div class="ullm-hint text-warning">最近一次加载错误：' + Layout.esc(info.load_error) + '</div>';
+        }
+        backendEl.innerHTML =
+          '<h3 class="ullm-section-title">推理后端</h3>' +
+          '<div class="ullm-inline">' +
+            '<div>' + badge + ' <span class="ullm-mono">' + Layout.esc(backendName) + '</span></div>' +
+            '<div><span class="ullm-stat-label">当前模型</span> <span class="ullm-mono">' + Layout.esc(current) + '</span></div>' +
+          '</div>' +
+          '<div class="ullm-hint" style="margin-top:8px;">' + Layout.esc(note) + '</div>' + extra;
+      }
+
+      function renderList(list) {
+        if (!list || list.length === 0) {
+          Layout.renderEmpty(listEl, {
+            icon: '🧠',
+            title: '还没有注册任何模型',
+            desc: '注册一个模型后即可加载并用于推理与评测',
+            actionLabel: '+ 注册模型',
+            onAction: openRegister
+          });
+          return;
+        }
+        var rows = '';
+        for (var i = 0; i < list.length; i++) {
+          var m = list[i];
+          var loaded = m.is_loaded === true;
+          rows += '<tr>' +
+            '<td class="ullm-nowrap">' + Layout.esc(m.id) + '</td>' +
+            '<td>' + Layout.esc(m.name) + '</td>' +
+            '<td class="ullm-nowrap">' + Layout.esc(m.model_type || '未知') + '</td>' +
+            '<td class="ullm-nowrap">' + (loaded
+              ? '<span class="ullm-badge ullm-badge-success">已加载</span>'
+              : '<span class="ullm-badge ullm-badge-muted">未加载</span>') + '</td>' +
+            '<td class="ullm-nowrap">' + Layout.esc(Layout.fmtDate(m.created_at)) + '</td>' +
+            '<td><div class="ullm-actions">' +
+              '<button type="button" class="ullm-btn ullm-btn-sm" data-action="load" data-name="' + Layout.esc(m.name) + '">加载</button>' +
+              '<button type="button" class="ullm-btn ullm-btn-danger ullm-btn-sm" data-action="delete" data-id="' + Layout.esc(m.id) + '">删除</button>' +
+            '</div></td>' +
+          '</tr>';
+        }
+        listEl.innerHTML =
+          '<div class="ullm-card" style="padding:0;">' +
+            '<div class="ullm-table-wrap"><table class="ullm-table">' +
+              '<thead><tr><th>ID</th><th>名称</th><th>类型</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>' +
+              '<tbody>' + rows + '</tbody>' +
+            '</table></div>' +
+          '</div>';
+      }
+
+      function load() {
+        Layout.renderLoading(listEl, '正在加载模型列表…');
+        errEl.innerHTML = '';
+        return Promise.all([
+          API.get('/api/model/list'),
+          API.get('/api/model/backend').catch(function () { return null; })
+        ]).then(function (res) {
+          renderBackend(res[1]);
+          renderList(res[0] || []);
+        }).catch(function (err) {
+          Layout.renderError(errEl, err, load);
+          listEl.innerHTML = '';
+        });
+      }
+
+      function openRegister() {
+        var body = document.createElement('div');
+        body.innerHTML =
+          '<div class="ullm-field"><label for="reg-name">模型名称</label>' +
+            '<input class="ullm-input" id="reg-name" placeholder="给这个模型起个名字"></div>' +
+          '<div class="ullm-field"><label for="reg-type">模型类型</label>' +
+            '<select class="ullm-select" id="reg-type"><option value="base">base</option><option value="lora">lora</option></select></div>' +
+          '<div class="ullm-field"><label for="reg-base">基础模型（选填）</label>' +
+            '<input class="ullm-input" id="reg-base" placeholder="其基于的模型名（可选）"></div>' +
+          '<div class="ullm-hint">注册仅登记元信息，不会下载权重；加载时若环境无 GPU 依赖会如实降级为占位后端。</div>' +
+          '<div id="reg-error"></div>';
+        var modalRef = Layout.modal({
+          title: '注册模型',
+          bodyNode: body,
+          actions: [
+            { label: '取消' },
+            { label: '注册', primary: true, keepOpen: true, onClick: function (ctx) { doRegister(ctx); return false; } }
+          ]
+        });
+        var errBox = modalRef.body.querySelector('#reg-error');
+        var nameInput = modalRef.body.querySelector('#reg-name');
+        if (nameInput) { nameInput.focus(); }
+
+        function doRegister(ctx) {
+          errBox.innerHTML = '';
+          var name = (nameInput.value || '').trim();
+          if (!name) { Layout.renderError(errBox, { detail: '请填写模型名称' }); return; }
+          var type = modalRef.body.querySelector('#reg-type').value;
+          var base = (modalRef.body.querySelector('#reg-base').value || '').trim();
+          var url = '/api/model/register?name=' + encodeURIComponent(name) +
+                    '&model_type=' + encodeURIComponent(type) +
+                    (base ? ('&base_model=' + encodeURIComponent(base)) : '');
+          Layout.setBusy(ctx.btn, true, '注册中…');
+          API.post(url, null).then(function () {
+            Layout.setBusy(ctx.btn, false);
+            ctx.close();
+            Layout.toast('已注册模型：' + name, 'success');
+            load();
+          }).catch(function (err) {
+            Layout.setBusy(ctx.btn, false);
+            Layout.renderError(errBox, err);
+          });
+        }
+      }
+
+      function doLoad(name) {
+        resultEl.innerHTML = '';
+        Layout.renderLoading(resultEl, '正在加载模型…');
+        API.post('/api/model/load', { model_name: name }).then(function (res) {
+          // 关键：降级绝不显示“加载成功”
+          if (res && res.status === 'degraded') {
+            resultEl.innerHTML =
+              '<div class="ullm-banner ullm-warning" role="alert">' +
+                '<strong>⚠ 已切换到占位后端（未安装 vLLM）。</strong>' +
+                '<span>' + Layout.esc(res.reason || '占位输出仅用于联调，不代表该模型能力。') + '</span>' +
+              '</div>';
+          } else if (res && res.status === 'success') {
+            resultEl.innerHTML =
+              '<div class="ullm-banner ullm-success" role="status">' +
+                '<strong>✔ 加载成功</strong>' +
+                '<span>backend：' + Layout.esc(res.backend || '未知') + '</span>' +
+              '</div>';
+          } else {
+            resultEl.innerHTML =
+              '<div class="ullm-banner ullm-warning"><strong>加载结果：</strong>' +
+              '<span class="ullm-mono">' + Layout.esc(JSON.stringify(res)) + '</span></div>';
+          }
+          Layout.refreshHealth();
+          load();
+        }).catch(function (err) {
+          Layout.renderError(resultEl, err, function () { doLoad(name); });
+        });
+      }
+
+      function doUnload() {
+        resultEl.innerHTML = '';
+        API.post('/api/model/unload', null).then(function () {
+          Layout.toast('已卸载当前模型', 'success');
+          Layout.refreshHealth();
+          load();
+        }).catch(function (err) {
+          Layout.renderError(resultEl, err);
+        });
+      }
+
+      function doDelete(id) {
+        if (!window.confirm('确认删除该模型记录？（不影响磁盘上的权重文件）')) { return; }
+        API.del('/api/model/' + id).then(function () {
+          Layout.toast('已删除', 'success');
+          load();
+        }).catch(function (err) {
+          Layout.toast((err && err.detail) ? err.detail : '删除失败', 'error');
+        });
+      }
+
+      listEl.addEventListener('click', function (e) {
+        var target = e.target.closest ? e.target.closest('[data-action]') : null;
+        if (!target) { return; }
+        var action = target.getAttribute('data-action');
+        if (action === 'load') { doLoad(target.getAttribute('data-name')); }
+        else if (action === 'delete') { doDelete(target.getAttribute('data-id')); }
+      });
+
+      document.getElementById('register-btn').addEventListener('click', openRegister);
+      document.getElementById('unload-btn').addEventListener('click', doUnload);
+
+      Layout.boot(load);
+    })();
+  </script>
+</body>
+</html>

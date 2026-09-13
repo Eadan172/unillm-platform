@@ -1,0 +1,89 @@
+%% UniLLM Platform 关键流程时序图
+%% 与 docs/ARCHITECTURE.md §4 对应
+
+%% ① 未登录访问控制台 -> 拦到登录页 -> 输入 Token -> 校验通过 -> 进入总览
+sequenceDiagram
+    actor U as 用户
+    participant B as 浏览器 /console/index.html
+    participant L as layout.js
+    participant A as api.js
+    participant M as AuthMiddleware
+    participant V as /api/auth/verify
+    U->>B: 打开 /console/index.html
+    B->>L: 加载共享布局
+    L->>A: guard()
+    A->>M: GET /api/auth/verify  (Authorization: Bearer <token>)
+    alt Token 有效
+        M->>V: 放行
+        V-->>A: 200 {valid:true, auth_enabled:true}
+        A-->>L: true
+        L->>B: renderChrome()（顶栏/侧栏/横幅）
+    else 无 Token / Token 无效
+        M-->>A: 401 {detail, error_code:"UNAUTHORIZED"}
+        A->>A: clearToken()
+        A-->>L: false
+        L->>B: location = /console/login.html?next=index.html
+    end
+    U->>B: 输入 Token, 点击「进入控制台」
+    B->>A: setToken(t); verify()
+    A->>M: GET /api/auth/verify
+    alt 有效
+        M-->>A: 200 {valid:true}
+        B->>B: location = next || index.html
+    else 无效
+        M-->>A: 401 访问令牌无效
+        A->>A: clearToken()
+        B->>B: 原地显示「Token 无效」，停留登录页
+    end
+
+%% ② 带 Token 上传数据集
+sequenceDiagram
+    actor U as 用户
+    participant P as datasets.html
+    participant L as layout.js
+    participant A as api.js
+    participant M as AuthMiddleware
+    participant D as /api/data/import
+    participant EX as 全局异常处理器
+    Note over L: 页面加载：GET /health（公开）-> degraded 决定横幅
+    L->>L: degraded=true -> 常驻橙色横幅（不可关闭）
+    U->>P: 选择文件 + 填名称, 点击「上传并导入」
+    P->>P: 本地前置校验扩展名 + 100MB
+    P->>A: post /api/data/import (FormData)
+    A->>M: Authorization: Bearer <token>
+    M->>D: 鉴权通过，放行
+    alt 成功
+        D-->>A: 200 DatasetResponse{total_samples>0}
+        P->>P: 关闭弹层 + 刷新列表
+    else 非法扩展名 / 超限
+        D->>EX: raise HTTPException(400/413)
+        EX-->>A: {detail, error_code:"BAD_REQUEST"/"PAYLOAD_TOO_LARGE", hint}
+        P->>P: 弹层内展示 detail 原文 + 保留可重试
+    end
+
+%% ③ 运行一次评测并渲染含「不可用指标」的结果页
+sequenceDiagram
+    actor U as 用户
+    participant E as evaluate.html
+    participant A as api.js
+    participant M as AuthMiddleware
+    participant C as /api/evaluate/create
+    participant R as /api/evaluate/{id}/run
+    U->>E: 填表(模型/数据集/指标勾选) -> 「创建并运行」
+    E->>A: post /api/evaluate/create
+    A->>M: Bearer <token>
+    M->>C: 放行
+    C-->>A: {id, status:"pending"}
+    A->>R: post /api/evaluate/{id}/run
+    alt 有可用样本
+        R-->>A: 200 {results:{sample_count, backend, backend_is_real_model, exact_match, token_f1, latency, perplexity}}
+        alt perplexity.available == false
+            E->>E: 渲染灰色「不可用」卡 + reason + how_to_enable（无任何数字）
+        end
+        alt backend_is_real_model == false
+            E->>E: 顶部标注「占位后端结果，不可作为模型能力结论」
+        end
+    else 缺数据
+        R-->>A: 400 {detail:"没有可用的评测数据…", error_code:"BAD_REQUEST"}
+        E->>E: 展示 detail 原文 + 「重试」入口
+    end

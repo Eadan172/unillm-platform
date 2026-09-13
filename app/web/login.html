@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 - UniLLM 控制台</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body data-page="login">
+  <div id="page-content">
+    <div class="ullm-login-wrap">
+      <div class="ullm-login-box">
+        <div class="ullm-login-head">
+          <h1 class="ullm-login-title">UniLLM 控制台</h1>
+          <p class="ullm-login-sub">一站式大模型研发平台 · 内网共享版</p>
+        </div>
+
+        <form class="ullm-card" id="login-form" autocomplete="off">
+          <div class="ullm-field">
+            <label for="token-input">团队访问 Token</label>
+            <input class="ullm-input" id="token-input" type="password"
+                   placeholder="请输入团队 Token" autocomplete="current-password">
+          </div>
+          <button type="submit" class="ullm-btn ullm-btn-primary" id="login-btn"
+                  style="width:100%;justify-content:center;">进 入 控 制 台</button>
+          <div class="ullm-login-error" id="login-error" role="alert"></div>
+        </form>
+
+        <div class="ullm-login-hint">
+          提示：Token 由部署者在配置中设置，如需访问请向团队管理员索取。
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="app-toast"></div>
+
+  <script src="assets/api.js"></script>
+  <script src="assets/layout.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var form = document.getElementById('login-form');
+      var input = document.getElementById('token-input');
+      var btn = document.getElementById('login-btn');
+      var errorBox = document.getElementById('login-error');
+
+      // 仅允许同目录下的页面名，防止开放重定向
+      function safeNext() {
+        var raw = new URLSearchParams(location.search).get('next') || 'index.html';
+        if (/^[A-Za-z0-9_.-]+$/.test(raw)) { return raw; }
+        return 'index.html';
+      }
+
+      function showError(msg) {
+        errorBox.textContent = msg ? ('✕ ' + msg) : '';
+      }
+
+      // 已持有有效 Token 时直接进入控制台（避免重复登录）
+      if (API.getToken()) {
+        API.verify().then(function (ok) {
+          if (ok) { location.href = safeNext(); }
+        });
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        showError('');
+        var token = (input.value || '').trim();
+        if (!token) {
+          showError('请输入 Token');
+          input.focus();
+          return;
+        }
+        Layout.setBusy(btn, true, '验证中…');
+        API.setToken(token);
+        API.verify().then(function (ok) {
+          if (ok) {
+            location.href = safeNext();
+            return;
+          }
+          API.clearToken();
+          showError('Token 无效，请向管理员确认后重试');
+          Layout.setBusy(btn, false);
+        }).catch(function (err) {
+          API.clearToken();
+          showError((err && err.detail) ? err.detail : '无法连接服务，请确认服务已启动');
+          Layout.setBusy(btn, false);
+        });
+      });
+
+      input.focus();
+    })();
+  </script>
+</body>
+</html>
