@@ -39,11 +39,15 @@
 | 是否 degraded | **是（`degraded: true`）** —— 本机未安装 vLLM，服务显式降级 |
 | 服务版本 | 0.3.0 |
 | GPU / CUDA | 无 |
-| 运行数据目录 | 全新临时目录（仓库内 `.tmp_*`），**未污染** `data/` 与 `data/_demo/`；原始输出留档在 `.tmp_cap/` 下（非"用完即删"，见下） |
+| 运行数据目录 | 全新临时目录（仓库内 `.tmp_*`）；**截至本报告落笔时点**未污染 `data/` 与 `data/_demo/`（快照限定见下）；原始输出留档在 `.tmp_cap/` 下（非"用完即删"，见下） |
 
 > **更正（v4）**：v3 曾写"用完即删"，**与事实不符**。实测本机工作区留存了若干
-> `.tmp_*` / `.pytest_*` 目录用于存放原始输出佐证。v4 的措辞改为"留档"，
-> 并明确：`data/` 与 `data/_demo/` 全程未被触碰（以 mtime 核对）。
+> `.tmp_*` / `.pytest_*` 目录用于存放原始输出佐证。v4 的措辞改为"留档"。
+>
+> **快照时点限定（v4 补）**：**截至本报告落笔时点（2026-09-13 22:34，以 mtime 核对）**，
+> 本案例在隔离临时目录内运行，未触碰 `data/` 与 `data/_demo/`。**后续并行活动可能改变工作区
+> 状态**——复核时 `data/_demo/demo.db` 的 mtime 已晚于本报告 mtime，属并行队友活动所致（不在
+> 本报告运行窗口 22:14~22:19 之内）。详见 §十一。
 
 `/health` 实测原始响应（v4 本轮服务，隔离临时库）：
 
@@ -57,7 +61,11 @@
 
 ## 二、5 步闭环的实际执行结果
 
-> 以下来自 **v4 本轮**（端口 8095，全新临时目录）的 run #1 运行，raw 见 §七.1、§七.2。
+> 以下 STEP1~4 的叙述来自 **v4 本轮**（端口 8095，全新临时目录）的 run #1 运行，完整 raw 见 §七.1。
+> **注意（出处，勿误读）**：本页 STEP5 内嵌的 `results`（`avg_ms 75.13 / min 63.666 / p50 75.122 / p95 83.22`）
+> 取自**第三次运行（`eval_id=3`）** 的快照（raw 见 §七.2）；**run #1** 自身的 STEP5 指标是
+> `70.907 / 79.744 / 78.876 / 87.282`（raw 见 §七.1 末尾）。二者**不是同一次运行**——延迟逐次不同，
+> 但两组都是真实测量值，仅出处不同。
 
 ### 前置：健康检查
 
@@ -143,7 +151,8 @@ prompt_tail=...请判断下面这条酒店评论是好评还是差评，只回�
 ### [STEP 5/5] 运行评测 `POST /api/evaluate/create` + `/{id}/run`
 
 脚本请求的指标是 `CASE_METRICS = ["exact_match", "token_f1", "latency"]`——**本案例从未请求 perplexity**。
-下面是 `GET /api/evaluate/1/result` 的**真实返回**（原样，未增删字段），见 §七.2：
+下面是 `GET /api/evaluate/3/result`（**第三次运行，`eval_id=3`**）的**真实返回**（原样，未增删字段），见 §七.2；
+**run #1** 自身在 STEP5 的原始汇总见 §七.1 末尾：
 
 ```json
 "metrics": { "requested": ["exact_match", "token_f1", "latency"] },
@@ -237,6 +246,16 @@ prompt_tail=...请判断下面这条酒店评论是好评还是差评，只回�
 **这说明 mock 后端不具备任何语义理解能力，无论样本难易一律返回同一段占位文本。**
 挑战样本的价值在于：**一旦换成真实模型**，它们能立刻暴露"模型是否只抓关键词、是否被强正面词带偏"。
 本机无 GPU，**未能在真实模型上验证这一点**。
+
+> **口径说明（STEP4 与 STEP5 不是同一批预测，务必留意）**：上表「mock 输出」列取自
+> **STEP4 的批量推理**（`run_case.py` 直连 `/v1/completions`，其 prompt 含
+> 「请判断下面这条酒店评论…只回答 1 或 0」，实测 `prompt_sha1=d378811577f7`）。
+> 而 **STEP5 的评测指标并非由这批预测产出**：`run_case.py` 传给评测的 `test_data`
+> 只含 `input`/`output`，平台的 `build_prompt` 生成的 prompt **不含**那句指令，实测该
+> 评测 prompt 的 `prompt_sha1=8b64be2b633b`（与 STEP4 的 `d378811577f7` 不同）。
+> 即 **STEP4 与 STEP5 是两次独立的后端调用**；只因 mock 后端对任何 prompt 都返回同一段
+> 确定性占位文本，两次输出才看起来雷同。结论不受影响：无论哪一批，mock 都答不出语义，
+> EM=0（0/10）全错。
 
 ### (c) 本次未验证的内容
 
@@ -437,10 +456,11 @@ collected=137 passed=137 failed=0 errors=0 skipped=0 exit_code=0
 >
 > **最终权威计数（由 team lead 亲自采集，非本报告作者所跑）**：在把 `TMP`/`TEMP`/`TMPDIR` 与
 > `--basetemp` **全部指向工作区内的全新目录**、从而绕开沙箱 `atexit` 清理的干净运行下，
-> `python -m pytest tests --collect-only -q` 收集到 **8 个文件共 167 条**：
+> `python -m pytest tests --collect-only -q` 收集到 **9 个文件共 217 条**：
 >
 > | 文件 | 用例数 |
 > |---|---:|
+> | `test_scalar_contract.py` | 50 |
 > | `test_security_hardening.py` | 46 |
 > | `test_input_validation.py` | 35 |
 > | `test_closed_loop.py` | 21 |
@@ -449,10 +469,24 @@ collected=137 passed=137 failed=0 errors=0 skipped=0 exit_code=0
 > | `test_metrics.py` | 12 |
 > | `test_evaluation_references.py` | 11 |
 > | `test_errors.py` | 9 |
-> | **合计** | **167** |
+> | **合计** | **217** |
 >
-> 同一环境的完整跑批结果：点阵 3 行合计 167 点，**`167 passed / 0 failed / 0 errors`**，
-> 全程无 `E`/`F`，**退出码 0**。
+> 相对 v4 首次落笔时的 167 条，本轮新增 `tests/test_scalar_contract.py` **50 条**
+> （评测侧标量契约、非有限浮点、空列表不回退、JSON 顶层类型，以及**别名在值为 None 时
+> 必须回退**的 6 条回归——后者是 QA 用 HEAD 基线树做真 A/B 实测发现的**本轮引入回归**，
+> 表现为 `sample_count` 在混合批次里从 2 静默降到 1）。
+>
+> **完整跑批结果**：`217 passed / 0 failed / 0 errors / 0 skipped`，全程无 `E`/`F`，**退出码 0**。
+> 取证方式如实说明——**收集数（217 与逐文件分解）由 team lead 亲自复核**；完整跑批由本轮
+> 实现者自跑并留档。**独立 QA 用 `--junitxml` 产出的权威计数见 §十一**（该路径不受沙箱
+> atexit 守卫影响，是本报告中计数类主张最可靠的一处来源）。team lead 另单独复跑了受影响
+> 的两个文件（`test_scalar_contract.py` 首行 50 点、导入侧两文件首行 46 点），**均 `EXIT=0`、无 `E`/`F`**。
+>
+> ⚠️ **本机沙箱的取证限制（会影响你复现时的观感）**：沙箱对「每轮次累计删除数」设有阈值
+> （50），pytest 的 `atexit` 清理与每个用例的临时目录清理都会计入。**全量跑批跑到约 70 个
+> 用例时可能被守卫阻塞**（前台表现为 `SIGTERM`，后台表现为卡住），**这不是测试挂起**——
+> 单独跑 `tests/test_input_validation.py` 可正常 **EXIT=0** 完成，只是被拦截开销拖到约 1 分钟。
+> 复现建议：**按文件分批跑再汇总**，或用 `--junitxml` 取计数。
 >
 > **关于"8 条 `tmp_path` setup error"的更正**：本报告早前版本曾据此推断 `passed≈159`，
 > 该推断**不成立**。那 8 个 error 是**本机沙箱的间歇性产物、并非必然**——pytest 的 `atexit`
@@ -588,8 +622,8 @@ F3 {"instruction":"\u200b"}  HTTP=200                ← 零宽字符冒充「�
 ```
 F1 {text,label} 上传      HTTP=400  datasets=0 annotations=0 orphans=0
 F1 新建数据集 id=1 total=0 → 标注进度 total=0 completed=0 pending=0 progress=0   ← 不再 pending=3
-F2 {"instruction":[1]}    HTTP=400  字段 'instruction' 的值类型不受支持：只能标量……实际为 list
-F2 {"instruction":{"a":1}} HTTP=400 同样精确到字段与类型
+F2 {"instruction":[1]}    HTTP=400  字段 'instruction' 的值类型不受支持：内容字段只能是标量（字符串 / 数字 / 布尔 / 空值），实际为 list。请将该字段改为字符串后再导入（例如把列表拼接为一段文本，或改用多条记录表达）。
+F2 {"instruction":{"a":1}} HTTP=400 字段 'instruction' 的值类型不受支持：内容字段只能是标量（字符串 / 数字 / 布尔 / 空值），实际为 dict。请将该字段改为字符串后再导入（例如把列表拼接为一段文本，或改用多条记录表达）。
 F3 {"instruction":"\u200b"}  HTTP=400
 F3 {"instruction":"\ufeff"}  HTTP=400
 F4 非对象行 123           HTTP=400  （可读错误，非 AttributeError 兜底）
@@ -678,6 +712,82 @@ QA（software-qa-engineer-3）对第一轮改动做了对抗性验证，**声明
 > **关于 CSV 多余列静默丢弃（QA P3）**：属既有解析行为（`csv.DictReader` 的 `None` 键），
 > 不影响本次任何结论，未改动。
 
+### 9.3 第三轮（回应独立 QA `QA-VERIFY-3` 的 P2，以及本轮回溯中发现的两项 P3）
+
+> **本节的 4 项改动在第四轮复验（`QA-VERIFY-4`）中被逐项实测确认成立**，但同时发现本轮改动
+> **引入了一条回归**——见本节末尾「第四轮发现的回归」。
+
+| 项 | 落点 | 根因 | 修法 | 验证 |
+|---|---|---|---|---|
+| **P2-A** 评测侧参考答案为**数组/对象**时被 `str()` 成 Python repr 并**计入指标** | `app/services/evaluate_service.py` `resolve_samples` | 只用 `has_visible_content`（**存在性**判定）不够：`[]` / `{}` 经 `str([])` = `"[]"` 非空而被放行，随后被 `str()` 成 repr（`"{'a': 1}"`，**不是合法 JSON**）拿去算指标；同一份数据走 `/api/data/import` 却是 400——**两侧口径打架** | 三个内容字段统一过 `require_scalar()`：先拒非标量，再拒非有限浮点 | 数组/对象取值 → **400** 且零副作用；`output=0` / `0.0` / `answer=0` 仍 **200** 且计入 `sample_count`；`None` / 键缺失 / `""` / 纯空白 / 零宽 / BOM → **仍跳过**（不是 400） |
+| **P2-B** `{"output": NaN}` → HTTP **200** + `status='completed'`，但 SQLite 把 NaN 存成 **NULL**，随后 `/export` 报「没有已标注的样本」 | `app/core/values.py` `require_scalar` | `_coerce_scalar` 对 `float` 原样放行；而 `json.loads` 与 `pandas.to_json` **都可能产出** `NaN` / `Infinity` | `require_scalar` 增加 `math.isfinite` 守卫：`NaN` / `inf` / `-inf`（含 `1e400`）一律 **400** | 拒绝且零副作用；并额外断言库中**不存在** `status='completed' AND output_text IS NULL` 的行——**这是本条的真正判据** |
+| **P3-1** 显式传入 `test_data: []` 时**静默回退**到关联数据集 | `app/services/evaluate_service.py:181` | `if test_data:` 把 `[]` 与「未传」混为一谈：用户明确说「就用这 0 条」，平台却改用了关联数据集——用户以为评的是自己给的数据 | 改为 `if test_data is not None:`，空列表单独报错，并写明「省略或传 null 才会回退」 | `test_data=[]` → **400**；完全省略 / 传 `null` → 仍正常回退 dataset |
+| **P3-2** `.json` 顶层是**单个对象**时报错**谎称**「解析到类型 str」 | `app/services/data_service.py:104-121` | `json.load` 对顶层对象返回 `dict` → `len(data)` 数的是**键数**（非 0，故绕过空文件守卫）→ `for item in data` 迭代出**键名（str）** → 于是报「实际为 str」，而真实顶层类型是 `object` | 迭代前先判顶层是否为 `list`，否则抛真实 400，报**实际顶层类型**与修正方向（用数组 `[...]` 包裹，或改用 `.jsonl`）；**不**静默包成单条记录 | 顶层对象 → 400 且消息报 `object`（不再说 `str`）；顶层标量 / 空数组各自消息均属实 |
+
+**契约去重（无行为变更）**：`resolve_field` / `coerce_scalar` / `require_scalar` 提升为
+`app/core/values.py` 的公开函数，让导入侧与评测侧共用**同一标量口径**（否则别名回退与键名回显
+的语义要在两处各写一遍，必然漂移）。`DataService` 上保留
+`_coerce_scalar` / `_require_scalar` / `_resolve_field` / `_has_visible_text` 四个**同名薄委托**，
+**既有调用点与既有错误文案一字未变**。
+
+**回归测试**：新增 `tests/test_scalar_contract.py`（**50 条**：标量契约 44 条 + 第四轮补充的
+别名回退回归 6 条）。套件总数 **167 → 217**，全绿（见 §7.3）。
+
+#### 第四轮发现的回归（已修，如实登记）
+
+| 项 | 落点 | 根因 | 修法 | 验证 |
+|---|---|---|---|---|
+| **回归**：`{"output": null, "answer": "x"}` 不回退到 `answer` | `app/core/values.py` 的 `resolve_field`（新增关键字参数 `fallback_when_none`）+ `app/services/evaluate_service.py` 的 `resolve_samples`（三个字段的 `resolve_field(...)` 调用，均带 `fallback_when_none=True`） | 把两档别名回退语义**合并成了一档**。导入侧的历史语义是「primary 键存在即取，哪怕值为 None」（`item.get(primary, item.get(alias, ""))`），而评测侧的历史语义是「**键缺失 / 值为 None 都回退**」。合并后评测侧沿用了导入侧那一档 | `resolve_field` 增加**仅限关键字**参数 `fallback_when_none: bool = False`（默认档不动，保导入侧逐字不变）；**评测侧三个字段显式传 `True`** | **单独一条 → 200 且计入指标**；**混合批次 `[{output:None,answer:"1"}, {output:"1"}]` 的 `sample_count` 必须是 2（不得静默降到 1）**；`{"instruction": null, "question": "q"}` 的 prompt 必须含 `q` |
+
+> **这条回归的性质**：它正是本报告反复点名的**最坏一类**——HTTP **200**、指标数字看起来
+> 完全正常，而**样本被悄悄丢掉了**。发现方式值得记下：独立 QA **没有**靠读代码论证，而是用
+> `git archive HEAD` 导出**一棵可运行的基线代码树**，把同一支探针分别跑在两棵树上做**真 A/B**，
+> 因此「本次引入 vs 既有」是**实测结论**而非推断。
+>
+> **教训（已写入工作记忆）**：把「相似但不同」的语义合并成一个共用实现时，**必须逐调用侧
+> 核对历史语义**，尤其是「键缺失」与「值为 None」这两档——它们在 Python 里常常被同一行
+> `item.get(k1) or item.get(k2)` 掩盖，而 `or` 与 `if is None` 的差别正是本项目从第一轮
+> 查到第四轮的主线缺陷。
+
+#### 本轮附带的三项静态审计（结论，非改动）
+
+| 审计 | 方法 | 结论 |
+|---|---|---|
+| **(a) 切片/截断路径的 `if <var>:`** | 全仓检索 `if limit` / `if skip` 类**真值判断** | 5 处**全部是显式比较**（形如 `if skip < 0 or limit <= 0`，分布于 annotation / data / evaluate / finetune / model 路由）。**不存在「`limit=0` 被真值判断吞掉」的缺陷。** 顺带发现 `samples[:max_samples]` 的静默截断（已在 §9.3 末尾与本报告 §7.3 登记） |
+| **(b) `or` 默认值残留** | 对 `or ""` / `or 0` / `or []` / `or {}` / `or None` / `or -1` / `or False` 做全量检索并**逐条人工裁定** | `app/` 下共命中 18 行，其中 8 行是**解释性注释/docstring**，**实际代码 10 处，全部是正当的「取默认值」语义**。**「判空语义 + 对象可能为 0」的危险类别计数为 0。** |
+| **(c) 被 ≥2 处调用的函数** | 机械扫描 `app/` + `tests/` 共 315 个函数 | 62 个有 ≥2 调用点；**仅报告、未改动任何签名**。**方法局限（必须说明）**：计数按**函数名**聚合，会把不同类/模块的同名函数合并（`_to_response`、`get_model`、`delete_model`、`generate` 等属「服务方法与路由处理函数重名」），**故只能用于定位候选，不能当作调用图** |
+
+> **(b) 的 10 处逐条清单**（team lead 已独立重跑检索、计数一致）：
+> `routes/data.py:38` `Path(raw_name or "").name`、`routes/data.py:50` `str(raw_name or "")`、
+> `config.py:121` `yaml.safe_load(f) or {}`、`core/errors.py:94` `for err in errors or []`、
+> `core/security.py:87` `(settings.app.api_token or "").strip()`、
+> `services/data_service.py:261` 与 `services/evaluate_service.py:206/207` 的 `ann.*_text or ""`
+> （读 SQLite **TEXT** 列：`0` 落库即存成 `'0'`、读回为 `str`，**不触发短路**）、
+> `services/evaluate_service.py:147` `(record.metrics or {}).get("requested", []) or []`、
+> `services/model_service.py:76` `config or {}`。
+> **判据**：这些位置的对象**不可能是合法内容值 `0`**（分别是路径 / 配置 / 凭证 / 列表容器 /
+> 模型配置），故 `or` 在此是「取默认值」而非「判空」，属正当写法。
+> **注意**：`evaluate_service.py` 里读 TEXT 列那三处「当前安全」是**巧合而非正确**——
+> 安全性依赖「列类型是 TEXT 且 `0` 会被存成 `'0'`」这一实现细节；若列类型或 ORM 映射变化就会复发。
+> 之所以现在判定为正当，是因为它们的语义本就是「无值时给空串」，不是「判断有没有内容」。
+
+**本轮未做（如实记录，附理由）**：
+
+1. **`samples[: settings.evaluation.max_samples]` 的静默截断未修**（`app/services/evaluate_service.py:248`）。
+   实测：`max_samples=2` 且传入 5 条 → 返回 2 条、`sample_count` 报 **2**。
+   **定性与处置见根 `README.md`「已知限制」第 9 条**：`sample_count = len(samples)` 报告的是
+   **截断后实际参与计算的条数**，这个数是**真的**、接口并未声称评过 5 条——属「少说一句」，
+   与 P2-A/P2-B 那类「说假话」性质不同；且 `max_samples` 是 `config.yaml` /
+   `UNILLM_EVALUATION__MAX_SAMPLES` 上的**显式配置项**。修复需在 `results` 中**新增**字段
+   （属契约新增），故本版不改，改为白纸黑字的已知限制 + 给出规避方式。
+2. **标注接口对数值标签返回 422 未改动。** `AnnotationUpdate.output_text: str` 是**显式声明**的
+   强契约，数字标签出约 → 422 是**正确响应**；而 `test_data` 侧本就无类型声明，数字在约内。
+   QA 曾建议「统一口径」放宽该 schema，**经评审不采纳**——那会主动削弱类型契约，才是引入缺陷。
+3. **`resolve_samples` 中 `isinstance(item, dict)` 过滤未删。** 实测该分支**不可达**：
+   路由声明 `test_data: Optional[List[dict]]`，Pydantic 在入口即拒掉非对象元素
+   （`[123]` / `["a"]` / `[null]` 均 **422**，仅 `[{"input": ..., "output": ...}]` 返回 200）。
+   保留作纵深防御，并已在**代码注释**中写明此点，避免后来者把它误读为同族静默丢弃缺陷。
+
 ---
 
 ## 十、如何复现本报告
@@ -693,7 +803,27 @@ python examples/sentiment_case/run_case.py
 python examples/sentiment_case/verify_data.py
 
 # 4) 回归自验
-python -m pytest -q                          # 预期 167 passed（见 §7.3 计数说明）
+python -m pytest -q                          # 预期 217 passed（见 §7.3 计数说明与沙箱取证限制）
 node scripts/frontend_logic_check.js         # 预期 13/13
 python scripts/smoke_test.py                 # 预期 15/15
 ```
+
+---
+
+## 十一、独立 QA 交叉引用（第三轮）
+
+本报告的本轮改动与全部数字，经历**第三轮独立对抗性验证**（`examples/sentiment_case/QA-VERIFY-3.md`，
+验证人 software-qa-engineer-4）。此处**仅登记其存在与结论，不复述其内容**：
+
+- **总判定：PASS with issues；未发现 P1。**
+- **无数字造假**：本报告所有**可复算数字**（样本数、Exact Match、Char-F1 逐条与宏平均、
+  `prompt_sha1`、pytest 计数、`verify_data` 统计、`Model 888888 not found`）经其**独立复现，逐位一致**；
+  未发现新的伪造原始输出。
+- **其余问题**：**2 条 P2 + 6 条 P3**。其中 **2 条 P2（① 评测侧缺标量守卫、非标量参考答案被 `str()` 化；
+  ② `NaN` 经导入落库为 `NULL` 却报成功）与本轮三处改动无关**，属平台**既有实现**（导入侧与评测侧
+  对「非标量」的口径不一致），**非本轮引入**。6 条 P3 亦为观察级。
+- 本报告据此仅修订了 **4 处标注/措辞**（§二 run 编号、§7.10 原样消息、§四(b) STEP4/STEP5 口径、
+  §一 快照时点），**未改动任何数字与计数**。
+
+> 依据 QA-VERIFY-3：其证据留档于 `.qa4/`（该目录被 `.gitignore` 的 `.qa*/` 规则忽略，仅存在于本机
+> 工作区，不随提交进入版本库）。该 QA 报告只读验证，未修改产品代码。

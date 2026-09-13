@@ -286,7 +286,7 @@ python scripts/smoke_test.py
 node scripts/frontend_logic_check.js
 ```
 
-预期输出：`167 passed`；冒烟脚本输出 `15/15 项通过`；前端检查输出 `13/13 passed`。
+预期输出：`217 passed`；冒烟脚本输出 `15/15 项通过`；前端检查输出 `13/13 passed`。
 
 > 若本机 sandbox 拦截 pytest 的退出清理（`SAFE_DELETE_BULK_REJECTED`），把临时目录移出系统 `%TEMP%` 再跑即可得到干净计数：
 > `TMP=.tmp_pytest TEMP=.tmp_pytest TMPDIR=.tmp_pytest python -m pytest -q --basetemp=.tmp_pytest`
@@ -381,6 +381,39 @@ unillm-platform/
    `tests/test_closed_loop.py:38` 断言该字段包含 `unillm-test-`，改动需连带修改测试契约，
    收益不足。**风险直说**：若把该服务暴露到不可信网络，攻击者可据此推断部署路径；此时应改为
    在 `/health` 中脱敏该字段，或在反向代理层限制 `/health` 的访问来源。
+9. **评测样本上限会静默截断（第三轮独立 QA 审计发现；本版如实记录、未修）**：
+   `settings.evaluation.max_samples` 默认 **100**，`EvaluateService.resolve_samples`
+   的末行 `return samples[: settings.evaluation.max_samples]`
+   （`app/services/evaluate_service.py`，本版位于 `:267`；**行号会随编辑漂移，请以该表达式为准**）
+   会截断样本，而返回结果里**没有任何字段说明「你提交了 N 条、实际只评了 M 条」**。
+   实测：把 `max_samples` 设为 2 并传入 5 条 → 返回 2 条，`sample_count` 报 2；
+   走 `dataset_id` 路径（数据集 3 条、`max_samples=1`）同样是 `sample_count=1`，**同样静默**
+   ——两条路径共用同一行代码。
+   - **为什么定性为「限制」而不是「谎报」**：`sample_count = len(samples)`
+     （同一文件内，本版位于 `:136`）取的是**截断后**的数量，陈述的是「实际参与计算的
+     条数」，这个数是真的——它**不会**声称评过 N 条。这与本版修掉的 P2-A/P2-B 那类
+     「返回 200 却落一个自相矛盾的状态」性质不同：那两条是**说假话**，这条只是**少说一句**。
+   - **触发条件**：单次评测提交的样本数 > `max_samples`（默认 100）。
+   - **当前规避**：把 `max_samples` 调到 ≥ 你的样本数——
+     `config.yaml` 的 `evaluation.max_samples`，或环境变量 `UNILLM_EVALUATION__MAX_SAMPLES`。
+   - **若要修复**：在 `results` 中**新增**（而非改动既有字段）被截断计数与原始提交数，
+     并在控制台评测页给出提示；属契约**新增**，故未在本版改动。
+   - **残留风险直说**：不知道 `max_samples` 默认值的存在时，调用方**无法从响应察觉**
+     样本被丢弃（只能靠数自己提交了几条）。
+10. **`raw_data` 与数据集归档文件会原样保留非法 JSON 数字（独立 QA 发现，既有行为）**：
+    被标量守卫拦下的 `NaN` / `Infinity` 只覆盖 `instruction` / `input` / `output`
+    三个**内容列**；若它们出现在**其它字段**（例如 `{"instruction": "x", "meta": NaN}`），
+    该记录会**整体原样**写入 `raw_data` JSON 列与磁盘归档 `data/datasets/dataset_N.json`。
+    实测这些位置确实含 `NaN` / `Infinity`，**严格的 JSON 解析器会解析失败**（Python 的
+    `json` 默认接受，故本平台自身不受影响）。**不产生自相矛盾状态，故仅为限制**。
+    **若要修复**：对 `raw_data` 的序列化启用 `allow_nan=False` 并在入口给出可读的 400，
+    或对整条记录做一次深度非有限值扫描——两者都需改动「原样保留用户记录」的既有语义。
+11. **数值型参考答案按 `str()` 字符串化后再比对（独立 QA 发现，既有口径）**：
+    评测把参考答案转为字符串参与指标计算，因此 `0.0` → `"0.0"`、`-0.0` → `"-0.0"`；
+    经标点归一化后 `"0.0"` 变成 `"00"`，模型若回答 `"0"` 会**判不中**。整数 `0` / `1`
+    不受影响（`0` → `"0"`，计数正确）。**这是数字格式化口径问题，不是 0 判空问题**
+    （0 的样本数统计是正确的）。**踩坑场景**：用浮点写标签（`0.0` / `1.0`）时请改成整数
+    或字符串。
 
 ---
 

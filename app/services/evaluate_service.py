@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core.values import has_visible_content
+from app.core.values import has_visible_content, require_scalar, resolve_field
 from app.models.database import Evaluation, utcnow
 from app.services.data_service import DataService
 from app.services.inference_service import InferenceService
@@ -178,7 +178,23 @@ class EvaluateService:
         """取得评测样本。缺数据时抛 ValueError，而不是悄悄用假数据。"""
         raw: List[Dict] = []
 
-        if test_data:
+        if test_data is not None:
+            # P3-1：显式传入的空列表**不得**静默回退到 dataset_id。
+            # 旧写法 ``if test_data:`` 把 ``[]`` 与「未传」混为一谈：用户明确说
+            # 「就用这 0 条」时，平台却偷偷改用了关联数据集——用户以为评的是自己
+            # 给的数据，实际评的是另一批。这是「不报错、结论错误」。
+            if not test_data:
+                raise ValueError(
+                    "test_data 已传入但为空列表（[]），没有任何可评测的样本。"
+                    "若要改用评测关联的数据集，请省略 test_data 或显式传 null。"
+                )
+            # 这里的 ``isinstance(item, dict)`` 过滤在**正常调用路径上不可达**，
+            # 保留它只是纵深防御，不是一条静默丢弃通道——已实测确认：
+            # 路由的运行端点声明为 ``test_data: Optional[List[dict]]``，Pydantic 在
+            # 入口就把非对象元素拒掉（``[123]`` / ``["a"]`` / ``[null]`` 均返回 422，
+            # 只有 ``[{"input": ..., "output": ...}]`` 返回 200）。
+            # 换言之：能进到这里的元素必然已是对象，不存在「元素被悄悄过滤掉」的情况。
+            # （记录此点是为了避免后来者把它误读为同族静默丢弃缺陷。）
             raw = [item for item in test_data if isinstance(item, dict)]
         elif record.dataset_id:
             annotations = self.data_service.get_annotations(record.dataset_id, limit=10000)
@@ -200,15 +216,45 @@ class EvaluateService:
             # ``0 or ...`` 会短路成 ""，把 output=0 的样本静默 continue 掉——
             # 评测于是跑在一个被悄悄改小的测试集上，样本数变少却无人知晓，
             # 指标数字看起来完全正常。这是「不报错、数字合理、结论错误」。
-            raw_reference = item.get("output")
-            if raw_reference is None:
-                raw_reference = item.get("answer")
+            #
+            # 别名回退只在**键缺失 / 值为 None** 时发生，且回显用户实际写的键名。
+            #
+            # ⚠️ ``fallback_when_none=True`` 是评测侧**独有**的一档，必须显式传：
+            # 评测侧的历史语义是「键缺失 / 值为 None 都回退」（旧写法
+            # ``x = item.get("output"); if x is None: x = item.get("answer")``）。
+            # 若沿用导入侧的默认档（primary 键存在即取，哪怕值为 None），
+            # ``{"output": None, "answer": "x"}`` 会在 require_scalar 之前就被判成
+            # 「没有参考答案」而 continue —— 单独一条表现成 400，**混在一批里则让
+            # sample_count 从 2 静默降到 1**，HTTP 仍是 200、EM 看起来完全正常。
+            # 这是真实发生过的回归（独立 QA 用 HEAD 树做真 A/B 实测发现），别把它改回去。
+            instruction_name, instruction = resolve_field(
+                item, "instruction", "question", fallback_when_none=True)
+            input_name, extra = resolve_field(
+                item, "input", "context", fallback_when_none=True)
+            reference_name, raw_reference = resolve_field(
+                item, "output", "answer", fallback_when_none=True)
+
+            # P2-A：三个内容字段都必须过标量守卫，与导入侧口径一致。
+            # 只用 has_visible_content 是不够的——它是**存在性**判定，``[]`` / ``{}``
+            # 会因为 ``str([])`` = ``"[]"`` 非空而被放行，随后被 ``str()`` 成 Python
+            # repr（甚至不是合法 JSON）拿去算指标。所以类型必须显式拒绝。
+            instruction = require_scalar(instruction_name, instruction)
+            extra = require_scalar(input_name, extra)
+
+            # 仅对「真的没有值」保留跳过语义：键缺失 / None / "" / 纯空白 / 零宽字符。
+            # （这些一定都是标量，因此放在类型守卫之后判定不会漏掉非标量。）
             if not has_visible_content(raw_reference):
-                continue  # 真的没有参考答案的样本才无法参与指标计算
+                continue
+            reference = require_scalar(reference_name, raw_reference)
+
             samples.append(
                 {
-                    "prompt": self.build_prompt(item),
-                    "reference": str(raw_reference),
+                    # 用**已收敛**的值组 prompt，确保 0 -> "0"、True -> "true"，
+                    # 且非标量已在上面被拒、不会渲染成 ``['a']`` 写进提示词。
+                    "prompt": self.build_prompt(
+                        {instruction_name: instruction, input_name: extra}
+                    ),
+                    "reference": str(reference),
                 }
             )
 
@@ -222,10 +268,15 @@ class EvaluateService:
 
     @staticmethod
     def build_prompt(item: Dict) -> str:
-        # 回退只在**键缺失 / 值为 None** 时发生。不要写成
-        # ``item.get("instruction") or item.get("question") or ""``——``0 or ...``
-        # 会把合法的 instruction=0 替换成空串，与导入侧「数值 0 是真实内容」
-        # 的语义打架（导入侧已允许 {"instruction": 0} 入库）。
+        # 不要写成 ``item.get("instruction") or item.get("question") or ""``——
+        # ``0 or ...`` 会把合法的 instruction=0 替换成空串，与导入侧「数值 0 是真实
+        # 内容」的语义打架（导入侧已允许 {"instruction": 0} 入库）。所以这里必须用
+        # ``is None`` 而不是真值判断。
+        #
+        # 调用关系说明：``resolve_samples`` 传进来的是**已经解析过别名**的字典
+        # （键名由 ``resolve_field`` 回显决定，可能是 ``instruction`` 也可能是
+        # ``question``），因此下面的回退在本项目内通常不会触发，保留它是为了让
+        # ``build_prompt`` 单独使用时（例如测试直接调用）仍然语义完整。
         instruction = item.get("instruction")
         if instruction is None:
             instruction = item.get("question")

@@ -366,7 +366,7 @@ class TestNumericZeroIsRealContent:
         assert _annotation_rows() == [("0", "", "pending")], _annotation_rows()
 
     def test_numeric_42_instruction_still_accepted(self, client):
-        """对照组：instruction=42 修复前后都应是 200（防止改过头）。"""
+        """对照组：``instruction=42`` 仍应是 200（防止放宽 0 时改过头）。"""
         response = _upload(client, "n42.jsonl", b'{"instruction":42}\n')
         assert response.status_code == 200, response.text
         assert response.json()["total_samples"] == 1
@@ -487,7 +487,13 @@ class TestFalsyValuesAreRealContent:
     def test_evaluation_all_zero_labels_is_not_empty(self, client):
         """全部标签都是 0 的评测集不得被判成「没有可用的评测数据」。
 
-        修复前实测：三条 output 全为 0/1/0 时 run 直接 400「没有可用的评测数据」。
+        旧实现（**代码推导，非实测**）：``item.get("output") or item.get("answer")
+        or ""`` 中 ``0 or ...`` 短路成 ``""``，两条 output=0 的样本被全部
+        ``continue`` 掉 ⇒ ``samples`` 为空 ⇒ run 抛「没有可用的评测数据」。
+
+        更正记录：本用例注释早期写的是「修复前实测 run 400」，那条观察**成因
+        不是 falsy 短路**——当时探针把 ``test_data`` 误传给了 ``/create``（该端点
+        不接收此字段），``/run`` 无 body 才导致 400。已撤回该表述，改为纯代码推导。
         """
         model = client.post("/api/model/register", params={"name": "all-zero"}).json()
         response = client.post(

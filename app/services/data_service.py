@@ -6,7 +6,13 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.core.values import INVISIBLE_CHARS, has_visible_content
+from app.core.values import (
+    INVISIBLE_CHARS,
+    coerce_scalar,
+    has_visible_content,
+    require_scalar,
+    resolve_field,
+)
 from app.models.database import Annotation, Dataset
 
 # 兼容旧引用：零宽 / 不可见字符常量统一由 app.core.values 定义。
@@ -14,17 +20,8 @@ _INVISIBLE_CHARS = INVISIBLE_CHARS
 
 
 def _resolve_field(item, primary, alias):
-    """返回 ``(实际使用的键名, 值)``，优先 primary、回退 alias，都没有则为默认空串。
-
-    保留旧实现 ``item.get(primary, item.get(alias, ""))`` 的语义：primary 键存在
-    时即使值为 None 也取 None（不回退 alias）。回显实际键名是为了让校验错误能
-    准确指出用户写的到底是哪个字段。
-    """
-    if primary in item:
-        return primary, item[primary]
-    if alias in item:
-        return alias, item[alias]
-    return primary, ""
+    """薄委托，实现统一收敛在 app.core.values.resolve_field。"""
+    return resolve_field(item, primary, alias)
 
 
 class DataService:
@@ -51,48 +48,16 @@ class DataService:
 
     @staticmethod
     def _coerce_scalar(value: Any) -> Any:
-        """把内容字段值收敛为可安全写入 TEXT 列的标量（**仅限空值与布尔**）。
-
-        - ``None`` -> ``""``（``Annotation.instruction`` 为 ``nullable=False``，
-          空值语义明确，属于正常兜底，不算「假成功」）
-        - ``bool`` -> ``"true"``/``"false"``（避免被存成 ``'True'``/``'False'``）
-        - ``str`` / ``int`` / ``float`` -> 原样返回
-
-        注意：``list`` / ``dict`` 等非标量**不在此处收敛**。早期实现用
-        ``json.dumps`` 把它们转成字符串后照常入库并返回 200「成功 N 条」，
-        等于用一个看似正常的返回值掩盖真实的格式错误——属于静默存垃圾，
-        与本项目「不造假、不谎报」原则相悖。这类值一律交由
-        :meth:`_require_scalar` 显式拒绝。
-        """
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, (int, float)):
-            return value
-        return value
+        """薄委托，实现统一收敛在 app.core.values.coerce_scalar。"""
+        return coerce_scalar(value)
 
     @staticmethod
     def _require_scalar(field_name: str, value: Any) -> Any:
-        """校验字段值为标量；非标量直接抛 ``ValueError``（路由映射为 400）。
+        """薄委托，实现统一收敛在 app.core.values.require_scalar。
 
-        错误消息点明**哪个字段**、**实际是什么类型**，并给出修正方向，避免用户
-        看到「类型不对」却不知道该改哪里。不使用 ``str()`` / ``json.dumps`` 强行
-        收敛——那会把格式错误变成一条看似成功入库的垃圾样本。
+        保留同名方法是为了不惊动既有调用点，并确保既有错误文案一字不变。
         """
-        value = DataService._coerce_scalar(value)
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            return value
-        raise ValueError(
-            "字段 '{field}' 的值类型不受支持：内容字段只能是标量"
-            "（字符串 / 数字 / 布尔 / 空值），实际为 {actual_type}。"
-            "请将该字段改为字符串后再导入（例如把列表拼接为一段文本，"
-            "或改用多条记录表达）。".format(
-                field=field_name, actual_type=type(value).__name__
-            )
-        )
+        return require_scalar(field_name, value)
 
     @staticmethod
     def _has_visible_text(value: Any) -> bool:
@@ -135,6 +100,25 @@ class DataService:
                 data = [dict(row) for row in csv.DictReader(f)]
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
+
+        # P3-2：JSON 顶层必须是数组。旧实现直接 ``for item in data`` 迭代，
+        # 若顶层是对象（``{"instruction": ...}`` 忘了用数组包裹），迭代出来的是
+        # **键名（str）**，于是报「解析到类型 str」——真实顶层类型是 object，
+        # 报错了对象，用户照着自己代码看会一头雾水。更糟的是顶层对象会被 len()
+        # 数成键数（非 0），A1 空文件校验也拦不住。
+        # 这里只把假话说成真话：报出真实顶层类型与修正方向，**不**静默包成单条记录。
+        if file_type == "json" and not isinstance(data, list):
+            self._safe_rollback()
+            top_kind = (
+                "对象（object）" if isinstance(data, dict)
+                else type(data).__name__
+            )
+            raise ValueError(
+                "JSON 文件的顶层结构不是数组：解析到的顶层类型是 {kind}，"
+                "无法逐条提取样本。请用数组包裹记录"
+                "（形如 [{{'instruction': ..., 'output': ...}}, ...]），"
+                "或改用 .jsonl（每行一条记录）。".format(kind=top_kind)
+            )
 
         # A1：文件里没有任何有效记录（0 字节 / 仅空行 / CSV 只有表头）时，
         # 旧实现会「正常」返回 0，静默落库一个 0 样本的空数据集，错误暴露过晚。

@@ -60,7 +60,11 @@ class TestFalsyReferencesAreRealAnswers:
         """核心用例：2 条 output=0 + 2 条 output=1 ⇒ 样本数必须是 4。
 
         预测值脚本化为全 "0"，因此正确答案是带 0 的那两条 ⇒ EM = 2/4 = 0.5。
-        修复前实测：sample_count=2、EM=0.0（一半数据被静默丢弃）。
+
+        旧行为（**代码推导，非在本代码库上跑出的修复前实测值**）：
+        ``item.get("output") or item.get("answer") or ""`` 中 ``0 or ...`` 短路成
+        ``""``，带 output=0 的两条会被 ``continue`` 静默丢弃 ⇒ 样本数 2、
+        EM = 0.0（两条预测 "0" 对不上参考 "1"）。本用例只固化**修复后**的期望值。
         """
         model = _model(client)
         created = _create_eval(client, model["id"])
