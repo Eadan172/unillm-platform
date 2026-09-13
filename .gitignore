@@ -175,3 +175,12 @@ ptmp_*/
 .final_acceptance.*
 .final_server.log
 probe_paths_*/
+
+# 清理操作备份目录（含被删文件副本，严禁入库）
+.cleanup_backup/
+
+# 以下文件已从远端仓库移除，但本地保留作为工作资料；
+# 若需重新纳入版本管理，删除对应行后 git add 即可。
+/DELIVERY.md
+/项目分析与改进报告.md
+/评测分析报告.md

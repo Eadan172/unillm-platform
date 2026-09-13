@@ -4,12 +4,16 @@
 ima 连接器的入库 MIME 对照表只覆盖 pdf/doc/ppt/xls/csv/md/txt/png/jpg/webp/
 mp3/m4a/wav/html/epub/aac，**不含 .py / .yaml / .ini / .jsonl / .gitignore**。
 为确保源码可被完整归档与检索，这里把它们汇总进一个 .md 文档。
+
+输出位置说明：产物写入 ``build/archive/``（已被 .gitignore 忽略）。
+它是由源码**派生**的临时归档件，不进入版本管理 —— 任何时候都能重新生成，
+源头始终是源码本身。需要归档时运行本脚本，再取 ``build/archive/`` 下的文件即可。
 """
 
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = PROJECT_ROOT / "unillm-platform_源码全文.md"
+OUTPUT = PROJECT_ROOT / "build" / "archive" / "unillm-platform_源码全文.md"
 
 # (展示用标题, 相对路径)
 FILES = [
@@ -108,10 +112,11 @@ def main() -> None:
             "",
         ]
 
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text("\n".join(lines), encoding="utf-8")
     total = sum((PROJECT_ROOT / p).read_text(encoding="utf-8", errors="replace").count("\n") + 1
                 for _, p in present)
-    print(f"已生成: {OUTPUT.name}")
+    print(f"已生成: {OUTPUT.relative_to(PROJECT_ROOT)}")
     print(f"收录文件数: {len(present)}")
     print(f"收录源码总行数: {total}")
     print(f"输出大小: {OUTPUT.stat().st_size / 1024:.1f} KB")

@@ -62,6 +62,13 @@ python scripts/smoke_test.py --port 8125   # 真实 uvicorn 端到端：15/15
 | 5b | `/export` 与 `/export/download` 错误路径一致 | 无标注样本 | 均 `400` 且 `detail` **逐字相同** | **PASS** |
 | 5c | 既有 `/export` 行为未改 | 有标注样本 | 返回 `{"status":"success","dataset_id":..,"output_path":..}` JSON | **PASS** |
 | 6 | 既有测试是否被削弱 | 与源码快照 `unillm-platform_源码全文.md` 逐行 diff | `conftest.py` **仅 +1 行**（`auth_enabled=False`）；`test_metrics.py`/`test_closed_loop.py`/`test_upload_safety.py` **逐字节一致** | **PASS** |
+
+> **归档说明（2026-09-14 追加）**：第 6 项与第 122 行注记所引用的源码快照
+> `unillm-platform_源码全文.md` 属于**派生产物**（由 `scripts/pack_source.py` 从源码自动汇总生成，
+> 非独立事实来源），已在仓库清理中移除。上述核查记录保留原样作为当时的过程凭证，
+> **未作改写**；如需重新生成该快照，运行 `python scripts/pack_source.py` 即可。
+> 由于快照可由源码随时重建，删除它不影响本报告结论的可复核性。
+| 6 | 既有测试是否被削弱 | 与源码快照 `unillm-platform_源码全文.md` 逐行 diff | `conftest.py` **仅 +1 行**（`auth_enabled=False`）；`test_metrics.py`/`test_closed_loop.py`/`test_upload_safety.py` **逐字节一致** | **PASS** |
 | 7 | 无 skip/xfail 充数 | `pytest -rs` | `121 passed`（原 75 + 新 46），**0 skipped / 0 xfailed / 0 error** | **PASS** |
 | 8 | 版本三处一致 | 读 config + openapi | `config.py:48`=`0.3.0`、`config.yaml`=`0.3.0`、FastAPI openapi `info.version`=`0.3.0` | **PASS** |
 | 9 | `.gitignore` 忽略密钥 | 读文件 | 第 129 行 `data/.api_token` | **PASS** |

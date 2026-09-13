@@ -16,6 +16,12 @@ from starlette.testclient import TestClient
 from app.core.errors import error_body, humanize_validation, register_exception_handlers
 
 
+class _Item(BaseModel):
+    """校验用请求模型。必须定义在模块级，原因见 ``TestValidationHumanized`` 注释。"""
+
+    count: int
+
+
 @pytest.fixture
 def boom_app() -> FastAPI:
     app = FastAPI()
@@ -72,12 +78,14 @@ class TestUnhandledException:
 
 
 class TestValidationHumanized:
+    # 注意：请求模型必须是**模块级**定义，不能写在测试函数内部。
+    # 本模块启用了 ``from __future__ import annotations``，函数内定义的类会让
+    # 注解变成字符串（ForwardRef），而 Pydantic 在**模块**命名空间里解析它，
+    # 于是抛 ``PydanticUndefinedAnnotation: name 'Item' is not defined``，
+    # 表现为路由注册阶段就报错（与断言无关，测试会直接 error）。
     def test_missing_field_is_humanized(self, boom_app: FastAPI):
-        class Item(BaseModel):
-            count: int
-
         @boom_app.post("/items")
-        async def create_item(item: Item):  # pragma: no cover - 仅注册路由
+        async def create_item(item: _Item):  # pragma: no cover - 仅注册路由
             return {"ok": True}
 
         client = TestClient(boom_app)
@@ -89,11 +97,8 @@ class TestValidationHumanized:
         assert "缺失必填项" in body["detail"]
 
     def test_wrong_type_is_humanized(self, boom_app: FastAPI):
-        class Item(BaseModel):
-            count: int
-
         @boom_app.post("/typed")
-        async def create_typed(item: Item):  # pragma: no cover
+        async def create_typed(item: _Item):  # pragma: no cover
             return {"ok": True}
 
         client = TestClient(boom_app)
