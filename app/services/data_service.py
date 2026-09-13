@@ -64,11 +64,114 @@ def _read_text_with_fallback(file_path: str, file_type: str) -> str:
     )
 
 
+# 平台识别的内容字段（含别名）。
+_KNOWN_FIELDS = frozenset({
+    "instruction", "question",
+    "input", "context",
+    "output", "answer",
+})
+
+# 「疑似想表达某个字段」的键名 → 该键最可能对应的平台字段。
+# 用于在字段被静默忽略时，把用户的意图翻译回平台术语。
+#
+# 选取依据：这些名字来自真实数据集的常见写法 ——
+#   label / target / response / completion / answer_text 是「答案」在其它
+#   标注平台/框架里的通行叫法；text / content / prompt 是「输入文本」；
+#   query / q 是「问题」。用户从别的工具迁过来时最容易撞上这些。
+_FIELD_ALIAS_HINTS: Dict[str, str] = {
+    "label": "output（答案/标签）",
+    "labels": "output（答案/标签）",
+    "target": "output（答案/标签）",
+    "response": "output（答案/标签）",
+    "completion": "output（答案/标签）",
+    "answer_text": "output（答案/标签）",
+    "gold": "output（答案/标签）",
+    "ground_truth": "output（答案/标签）",
+    "text": "instruction（指令/文本）",
+    "content": "instruction（指令/文本）",
+    "prompt": "instruction（指令/文本）",
+    "query": "instruction（指令/文本）",
+    "q": "instruction（指令/文本）",
+}
+
+
+def _format_hints(hints: "Dict[str, str]") -> str:
+    """把 ``{被忽略的键: 建议映射到的字段}`` 渲染成一句中文提示。"""
+    if not hints:
+        return ""
+    parts = [f"`{key}` → {target}" for key, target in sorted(hints.items())]
+    return (
+        "检测到以下字段名未被平台识别，其内容会被忽略："
+        + "；".join(parts)
+        + "。"
+    )
+
+
+def _suggest_field_hints(actual_keys: "List[str]") -> str:
+    """整体不可用（A2）时，把实际键名翻译成「你可能想写哪个字段」。"""
+    hints = {
+        key: target
+        for key, target in _FIELD_ALIAS_HINTS.items()
+        if key in actual_keys
+    }
+    if hints:
+        return _format_hints(hints)
+    return ""
+
+
+def _collect_ignored_field_hints(data: "List[Any]") -> "Dict[str, str]":
+    """扫描全批记录，收集「疑似想表达内容、但平台不认」的键名。
+
+    只在**该记录实际缺内容**时才计为可疑 —— 若一条记录既有正确的
+    ``output``、又额外带了 ``label``，那 ``label`` 只是冗余元数据，
+    不应打扰用户。判定标准是「这个键疑似表达内容，且它对应的平台字段是空的」。
+
+    Args:
+        data: 原始记录列表（dict 列表）。
+
+    Returns:
+        ``{被忽略的键名: 建议映射到的平台字段}``，无命中时为空 dict。
+    """
+    found: Dict[str, str] = {}
+    # 键名 → 它「疑似对应」的平台字段主名，用于判断该字段是否已另有值
+    key_to_field = {
+        "label": "output", "labels": "output", "target": "output",
+        "response": "output", "completion": "output", "answer_text": "output",
+        "gold": "output", "ground_truth": "output",
+        "text": "instruction", "content": "instruction", "prompt": "instruction",
+        "query": "instruction", "q": "instruction",
+    }
+    # 每个字段的等价键集合（写对任一个即视为该字段已有值）
+    field_equivalents = {
+        "instruction": ("instruction", "question"),
+        "output": ("output", "answer"),
+    }
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        for key, field in key_to_field.items():
+            if key not in item:
+                continue
+            # 该记录是否已用正确字段提供了这个位置的内容？
+            provided = any(
+                key2 in item for key2 in field_equivalents[field]
+            )
+            if not provided:
+                # 而且这个疑似键本身确实带了内容，才值得提示
+                if has_visible_content(item[key]):
+                    found[key] = _FIELD_ALIAS_HINTS[key]
+    return found
+
+
 class DataService:
     def __init__(self, db_session: Session):
         self.db = db_session
         self.storage_path = Path(settings.storage.datasets_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        # 导入时检测到的「疑似字段名写错」提示，供路由层回显给用户。
+        # 不阻断导入 —— 正常记录照常入库，只是把被忽略的字段告知用户。
+        self.ignored_field_warning: str = ""
 
     def rollback(self) -> None:
         """把 Session 从失败/失效状态恢复出来（薄封装，便于路由层调用）。"""
@@ -252,13 +355,28 @@ class DataService:
         if len(prepared) > 0 and content_count == 0:
             self._safe_rollback()
             actual_keys = sorted(data[0].keys())
+            hints = _suggest_field_hints(actual_keys)
             raise ValueError(
                 "没有任何记录包含可识别的内容字段：解析成功 {total} 条，但每条的 "
                 "instruction / input / output 均为空，无法作为有效样本入库。"
                 "平台接受的内容字段为：instruction（或 question）、input（或 context）、"
-                "output（或 answer）。第一条记录实际出现的键名为：{actual}。"
+                "output（或 answer）。第一条记录实际出现的键名为：{actual}。{hints}"
                 "请将文本放入 instruction（或 question）、输入放入 input（或 context）、"
-                "答案放入 output（或 answer）。".format(total=len(prepared), actual=actual_keys)
+                "答案放入 output（或 answer）。".format(
+                    total=len(prepared), actual=actual_keys, hints=hints)
+            )
+
+        # C3：部分记录的字段名疑似写错 —— 不再静默忽略。
+        # 场景：一批数据里既有正确记录、也有把 output 写成 label/text 的记录。
+        # 旧实现只做「全部无内容才拒绝」，于是这类混合批次会静默入库，
+        # 错写的那几条 content 全空、status 全 pending，而接口返回 200 ——
+        # 用户以为导入成功，实际拿到的样本数少于预期，且没有任何线索。
+        # 这里在**不阻断**正常记录的前提下，把被忽略的疑似字段名回显出来。
+        unknown_hints = _collect_ignored_field_hints(data)
+        if unknown_hints:
+            self.ignored_field_warning = (
+                "导入成功，但有字段未被识别：" + _format_hints(unknown_hints)
+                + "若这些字段本应承载内容，请改用平台字段名重新导入。"
             )
 
         # ---- 第二步：全部校验通过后，才真正落库 ----

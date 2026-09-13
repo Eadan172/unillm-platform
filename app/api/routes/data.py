@@ -122,7 +122,13 @@ async def import_dataset(
         file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"数据导入失败: {exc}") from exc
 
-    return _to_response(data_service.get_dataset(dataset_id))
+    response = _to_response(data_service.get_dataset(dataset_id))
+    # 非阻断警告（如「字段名未被识别」）在此附加。
+    # 不改 _to_response 签名，是因为它被 create / get / list 等多处复用，
+    # 那些路径没有导入上下文，也无此类警告。
+    if data_service.ignored_field_warning:
+        response.warning = data_service.ignored_field_warning
+    return response
 
 
 @router.post("/create", response_model=DatasetResponse)

@@ -173,10 +173,19 @@
           var url = '/api/data/import?name=' + encodeURIComponent(name) +
                     '&description=' + encodeURIComponent(desc);
           Layout.setBusy(ctx.btn, true, '上传中…');
-          API.post(url, form, true).then(function () {
+          API.post(url, form, true).then(function (res) {
             Layout.setBusy(ctx.btn, false);
             ctx.close();
-            Layout.toast('导入成功', 'success');
+            // 后端可能返回非阻断 warning（如「字段名未被识别」）。
+            // 这类问题不会让导入失败，但会让可用样本少于预期 ——
+            // 必须显式展示，不能只报一句「导入成功」把它盖掉。
+            var warn = res && res.warning;
+            if (warn) {
+              Layout.toast('导入成功，但有提示', 'warning');
+              Layout.notice(warn, 'warning');
+            } else {
+              Layout.toast('导入成功', 'success');
+            }
             load();
           }).catch(function (err) {
             Layout.setBusy(ctx.btn, false);

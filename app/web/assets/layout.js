@@ -344,6 +344,39 @@
       return { close: close, body: body, mask: mask, foot: foot };
     },
 
+    /* 常驻提示条（不自动消失，可手动关闭）。
+       toast 只显示 3.4 秒，适合「操作成功」这类瞬时反馈；
+       但「字段名未被识别」这类**需要用户回去改数据源**的提示，
+       错过了就查不到原因了，必须常驻并醒目。 */
+    notice: function (msg, type) {
+      var host = document.getElementById('app-notice-host');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'app-notice-host';
+        host.className = 'ullm-notice-host';
+        document.body.appendChild(host);
+      }
+      var bar = document.createElement('div');
+      bar.className = 'ullm-notice ' + (type === 'error' ? 'ullm-notice-error' : 'ullm-notice-warning');
+      var icon = document.createElement('span');
+      icon.className = 'ullm-notice-icon';
+      icon.textContent = type === 'error' ? '✕' : '!';
+      var text = document.createElement('div');
+      text.className = 'ullm-notice-msg';
+      text.textContent = msg;
+      var closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.className = 'ullm-notice-close';
+      closeBtn.setAttribute('aria-label', '关闭提示');
+      closeBtn.textContent = '×';
+      closeBtn.addEventListener('click', function () { if (bar.parentNode) { bar.parentNode.removeChild(bar); } });
+      bar.appendChild(icon);
+      bar.appendChild(text);
+      bar.appendChild(closeBtn);
+      host.appendChild(bar);
+      return bar;
+    },
+
     /* 设置按钮忙碌态（防重复提交） */
     setBusy: function (btn, busy, busyText) {
       if (!btn) { return; }

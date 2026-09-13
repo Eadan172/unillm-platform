@@ -48,6 +48,12 @@ class DatasetResponse(BaseModel):
     total_samples: int
     created_at: datetime
 
+    # 导入时的非阻断警告（当前用于「字段名未被识别」提示）。
+    # 为 None 表示无警告；有值时应原样展示给用户 ——
+    # 这类问题**不会**让导入失败，但会让用户拿到的样本少于预期，
+    # 因此不能静默丢弃（详见 data_service._collect_ignored_field_hints）。
+    warning: Optional[str] = None
+
     model_config = ORM_CONFIG
 
 

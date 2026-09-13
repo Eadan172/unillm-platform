@@ -721,3 +721,111 @@ class TestJsonParseErrorsHumanized:
         response = _upload(client, "blank.json", b"   \n\t\n  ")
         assert response.status_code == 400, response.text
         assert "没有任何有效记录" in response.json()["detail"]
+
+
+class TestIgnoredFieldWarning:
+    """C3：字段名未被识别时的明确提示（本轮新增）。
+
+    背景 —— 旧实现存在一个**静默**缺口：A2 校验只在「**全部**记录都无内容」
+    时才拒绝。若一批数据里既有正确记录、也有把 ``output`` 写成 ``label`` 的记录，
+    则整批照常入库（HTTP 200），但错写的那几条 content 全空、status 全 pending。
+    用户以为导入成功，实际可用样本少于预期，且**收不到任何线索**。
+
+    本轮改为：导入照常成功（不阻断正常记录），但在响应的 ``warning`` 字段里
+    回显被忽略的字段名及其建议映射。
+
+    设计要求（避免误报）：
+    - 只在该位置**确实没有正确字段**时才提示。一条记录若既有 ``output``
+      又有 ``label``，那 ``label`` 只是冗余元数据，不该打扰用户。
+    - 值为空的疑似字段不提示（没有内容可丢）。
+    """
+
+    def _import(self, client, content: bytes, filename: str = "d.json"):
+        return _upload(client, filename, content)
+
+    def test_misnamed_output_produces_warning(self, client):
+        """把 output 写成 label —— 应导入成功，但给出明确提示。"""
+        payload = json.dumps(
+            [{"instruction": "分类", "label": "正面"}], ensure_ascii=False
+        ).encode("utf-8")
+        response = self._import(client, payload)
+        assert response.status_code == 200, response.text
+        warning = response.json().get("warning")
+        assert warning, "字段名写错却没有任何提示（静默忽略）"
+        assert "label" in warning, f"提示未指出具体字段名：{warning}"
+        assert "output" in warning, f"提示未给出修正方向：{warning}"
+
+    def test_misnamed_instruction_produces_warning(self, client):
+        payload = json.dumps(
+            [{"text": "分类", "output": "正面"}], ensure_ascii=False
+        ).encode("utf-8")
+        response = self._import(client, payload)
+        assert response.status_code == 200, response.text
+        warning = response.json().get("warning")
+        assert warning and "text" in warning, f"未提示 text 字段：{warning}"
+
+    def test_correct_fields_produce_no_warning(self, client):
+        """字段全正确时不得出现警告（避免噪音）。"""
+        payload = json.dumps(
+            [{"instruction": "分类", "output": "正面"}], ensure_ascii=False
+        ).encode("utf-8")
+        response = self._import(client, payload)
+        assert response.status_code == 200, response.text
+        assert not response.json().get("warning"), "正确数据被误报警告"
+
+    def test_redundant_label_with_correct_output_no_warning(self, client):
+        """既有 output 又带 label —— label 只是冗余元数据，不该报警。"""
+        payload = json.dumps(
+            [{"instruction": "分类", "output": "正面", "label": "正面"}],
+            ensure_ascii=False,
+        ).encode("utf-8")
+        response = self._import(client, payload)
+        assert response.status_code == 200, response.text
+        assert not response.json().get("warning"), "冗余元数据被误报警告"
+
+    def test_empty_misnamed_field_no_warning(self, client):
+        """疑似字段但值为空 —— 没有内容可丢，不该报警。"""
+        payload = json.dumps(
+            [{"instruction": "分类", "output": "正面", "label": ""}],
+            ensure_ascii=False,
+        ).encode("utf-8")
+        response = self._import(client, payload)
+        assert response.status_code == 200, response.text
+        assert not response.json().get("warning"), "空值被误报警告"
+
+    def test_mixed_batch_warns_but_still_imports(self, client):
+        """混合批次：正常记录必须照常入库，同时给出警告。
+
+        这是本类要守的核心语义 —— **不阻断**（区别于 A2 的整体拒绝），
+        但也**不静默**。
+        """
+        payload = json.dumps(
+            [
+                {"instruction": "a", "output": "b"},
+                {"instruction": "c", "label": "d"},
+            ],
+            ensure_ascii=False,
+        ).encode("utf-8")
+        response = self._import(client, payload)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # 两条都入库（错写的那条 content 为空，但记录本身在）
+        assert body["total_samples"] == 2, body
+        assert body.get("warning"), "混合批次未给出警告"
+
+    def test_all_misnamed_still_rejected_by_a2(self, client):
+        """全部字段都不可识别时，仍走 A2 整体拒绝（不被本类削弱）。"""
+        payload = json.dumps(
+            [{"text": "分类", "label": "正面"}], ensure_ascii=False
+        ).encode("utf-8")
+        response = self._import(client, payload)
+        assert response.status_code == 400, response.text
+        assert "没有任何记录包含可识别的内容字段" in response.json()["detail"]
+
+    def test_csv_misnamed_column_warns(self, client):
+        """CSV 路径同样适用（走同一套校验）。"""
+        content = "instruction,label\n分类,正面\n".encode("utf-8")
+        response = self._import(client, content, filename="d.csv")
+        assert response.status_code == 200, response.text
+        warning = response.json().get("warning")
+        assert warning and "label" in warning, f"CSV 未提示 label：{warning}"
