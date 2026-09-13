@@ -1,4 +1,5 @@
 import csv
+import io
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,45 @@ _INVISIBLE_CHARS = INVISIBLE_CHARS
 def _resolve_field(item, primary, alias):
     """薄委托，实现统一收敛在 app.core.values.resolve_field。"""
     return resolve_field(item, primary, alias)
+
+
+# 文本文件读取：先按 UTF-8（含 BOM）尝试，失败再退到 GBK/GB18030。
+# 依据 —— 中文 Windows 用户的真实来源：
+#   1. 记事本另存为「UTF-8」会写入 BOM，裸 utf-8 打开会抛
+#      "Unexpected UTF-8 BOM (decode using utf-8-sig)"（实测触发）
+#   2. Excel 导出的 CSV/JSON 在中文环境下常是 GBK/GB18030 编码
+# 这两个都不是攻击面，而是**日常使用必撞**的墙，故主动兼容。
+_ENCODINGS = ("utf-8-sig", "gb18030")
+# GB18030 是 GBK 的超集，能解出 GBK 无法表示的字符，故用更宽的那个兜底。
+
+
+def _read_text_with_fallback(file_path: str, file_type: str) -> str:
+    """按候选编码依次尝试读取文本；全失败时抛中文可操作提示。
+
+    不做静默容错（``errors="replace"``）—— 那会把乱码写进数据集，
+    比直接报错更糟。这里保持"拒绝"语义，只是把英文底层异常换成
+    用户能照着做事的提示。
+    """
+    raw = Path(file_path).read_bytes() if False else None  # 占位：避免误用
+    last_error: Optional[Exception] = None
+    for encoding in _ENCODINGS:
+        try:
+            with open(file_path, "r", encoding=encoding, newline="") as f:
+                return f.read()
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+        except UnicodeError as exc:  # 包含 LookupError 之外的编码异常
+            last_error = exc
+            continue
+
+    # 全部编码都失败：给出可操作的中文提示，附上真实的失败位置。
+    raise ValueError(
+        "文件编码无法识别：已尝试 UTF-8（含 BOM）与 GB18030（兼容 GBK），"
+        "均无法解码。请用记事本或编辑器将文件「另存为」UTF-8 编码后重试"
+        "（若源数据来自中文版 Excel，导出时请选择 UTF-8）。"
+        f"原始错误：{last_error}"
+    )
 
 
 class DataService:
@@ -85,19 +125,48 @@ class DataService:
             raise ValueError(f"Dataset {dataset_id} not found")
 
         if file_type == "json":
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            # 统一走编码回退读取：旧实现裸 utf-8 打开，遇到 BOM 或 GBK 直接抛
+            # 英文 UnicodeDecodeError（实测触发），中文用户无从下手。
+            text = _read_text_with_fallback(file_path, file_type)
+            if not text.strip():
+                # 0 字节 / 纯空白文件：旧实现直接喂给 json.load()，抛的是
+                # "Expecting value: line 1 column 1 (char 0)" 英文底层异常，
+                # 与其余分支的中文文案不一致。这里前移到统一提示。
+                self._safe_rollback()
+                raise ValueError(
+                    "文件中没有任何有效记录：接受的格式为 "
+                    "JSON / JSONL / CSV，且至少需包含一条记录（空文件、仅空行、"
+                    "或 CSV 只有表头的文件会被拒绝）。"
+                )
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                self._safe_rollback()
+                raise ValueError(
+                    "JSON 解析失败：文件不是合法的 JSON。"
+                    f"错误位置在第 {exc.lineno} 行第 {exc.colno} 列（{exc.msg}）。"
+                    "请检查括号 / 引号是否配对、是否有多余逗号，"
+                    "或改用 .jsonl（每行一条记录）。"
+                ) from exc
         elif file_type == "jsonl":
             data = []
-            with open(file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
+            text = _read_text_with_fallback(file_path, file_type)
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if line.strip():
+                    try:
                         data.append(json.loads(line))
+                    except json.JSONDecodeError as exc:
+                        self._safe_rollback()
+                        raise ValueError(
+                            f"JSONL 第 {lineno} 行解析失败：该行不是合法的 JSON"
+                            f"（{exc.msg}）。JSONL 要求**每行一个完整 JSON 对象**，"
+                            "不能跨行换行、行尾不能有多余逗号。"
+                        ) from exc
         elif file_type == "csv":
             # 原实现用 pandas 只为读一个 CSV，却引入 pandas + pyarrow 约 120MB
             # 依赖。标准库 csv 足以覆盖，故改用 stdlib。
-            with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
-                data = [dict(row) for row in csv.DictReader(f)]
+            text = _read_text_with_fallback(file_path, file_type)
+            data = [dict(row) for row in csv.DictReader(io.StringIO(text, newline=""))]
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
 

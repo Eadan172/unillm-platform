@@ -10,7 +10,10 @@ mp3/m4a/wav/html/epub/aac，**不含 .py / .yaml / .ini / .jsonl / .gitignore**�
 源头始终是源码本身。需要归档时运行本脚本，再取 ``build/archive/`` 下的文件即可。
 """
 
+from datetime import datetime
 from pathlib import Path
+import re
+import subprocess
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = PROJECT_ROOT / "build" / "archive" / "unillm-platform_源码全文.md"
@@ -34,6 +37,21 @@ FILES = [
     ("服务 app/services/inference_service.py", "app/services/inference_service.py"),
     ("服务 app/services/finetune_service.py", "app/services/finetune_service.py"),
     ("服务 app/services/evaluate_service.py", "app/services/evaluate_service.py"),
+    # ---- 0.3.0 新增/关键模块（旧清单遗漏，重传时必须补上）----
+    ("契约核心 app/core/values.py", "app/core/values.py"),
+    ("安全鉴权 app/core/security.py", "app/core/security.py"),
+    ("错误契约 app/core/errors.py", "app/core/errors.py"),
+    ("Web 控制台 app/web/index.html", "app/web/index.html"),
+    ("Dockerfile", "Dockerfile"),
+    ("docker-compose.yml", "docker-compose.yml"),
+    ("打包脚本 scripts/pack_source.py", "scripts/pack_source.py"),
+    ("测试 tests/test_auth.py", "tests/test_auth.py"),
+    ("测试 tests/test_errors.py", "tests/test_errors.py"),
+    ("测试 tests/test_input_validation.py", "tests/test_input_validation.py"),
+    ("测试 tests/test_scalar_contract.py", "tests/test_scalar_contract.py"),
+    ("测试 tests/test_evaluation_references.py", "tests/test_evaluation_references.py"),
+    ("测试 tests/test_security_hardening.py", "tests/test_security_hardening.py"),
+    # ---- 原有条目 ----
     ("测试 tests/conftest.py", "tests/conftest.py"),
     ("测试 tests/test_metrics.py", "tests/test_metrics.py"),
     ("测试 tests/test_closed_loop.py", "tests/test_closed_loop.py"),
@@ -69,6 +87,53 @@ def fence_for(path: Path) -> str:
     return "text"
 
 
+def _detect_version() -> str:
+    """从 app/config.py 读取真实应用版本，读不到时返回 unknown。
+
+    旧实现把版本号与验证状态**硬编码**在头部表格里，于是即使应用已升到 0.3.0，
+    重新生成的快照仍然宣称 0.2.0、9 个测试文件 53 个用例 —— 派生物比源头还陈旧，
+    上传到知识库后会直接误导读者。这里改为从唯一源头推导。
+    """
+    config_path = PROJECT_ROOT / "app" / "config.py"
+    if not config_path.exists():
+        return "unknown"
+    match = re.search(
+        r'^\s*version\s*:\s*str\s*=\s*["\']([^"\']+)["\']',
+        config_path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    return match.group(1) if match else "unknown"
+
+
+def _count_tests() -> str:
+    """统计测试文件数与用例数。
+
+    说明：``def test_`` 静态计数会**低估**真实用例数，因为参数化测试
+    （``@pytest.mark.parametrize``）在运行时展开成多条。本函数只给出规模量级，
+    真实执行结果以 ``docs/QA-REPORT.md`` 为准。
+    """
+    tests_dir = PROJECT_ROOT / "tests"
+    if not tests_dir.is_dir():
+        return "unknown"
+    files = sorted(tests_dir.glob("test_*.py"))
+    total = 0
+    for f in files:
+        total += len(re.findall(r"^\s*def test_", f.read_text(encoding="utf-8", errors="replace"), re.MULTILINE))
+    return f"{len(files)} 个测试文件 / {total} 个测试函数"
+
+
+def _git_short_sha() -> str:
+    """取当前 HEAD 短 SHA；非 git 环境返回 unknown。"""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=10,
+        )
+        return out.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def main() -> None:
     lines = [
         "# UniLLM Platform 源码全文",
@@ -79,9 +144,14 @@ def main() -> None:
         "| 项目 | 信息 |",
         "|---|---|",
         "| 仓库 | `https://github.com/Eadan172/unillm-platform.git` |",
-        "| 交付版本 | 0.2.0 |",
-        "| 验证状态 | 编译通过 / 53 个测试用例通过 / 真实进程冒烟 13 项通过 |",
-        "| 验证环境 | Windows 11 + Python 3.13.12 + 纯 CPU |",
+        f"| 交付版本 | {_detect_version()} |",
+        f"| 提交 | `{_git_short_sha()}` |",
+        f"| 测试规模 | {_count_tests()} |",
+        f"| 生成时间 | {datetime.now().strftime('%Y-%m-%d %H:%M')} |",
+        "",
+        "> 上述版本号与提交由脚本从源码与 git 实时推导，不硬编码。",
+        "> 「测试规模」是源码中 `def test_` 的**静态**计数，参数化用例会展开成更多条，",
+        "> 故该数字低于真实执行数；**真实执行结果**（含通过数）以 `docs/QA-REPORT.md` 为准。",
         "",
         "---",
         "",

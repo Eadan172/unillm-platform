@@ -607,3 +607,117 @@ class TestFalsyValuesAreRealContent:
         )
         assert response.status_code == 422, response.text
 
+
+class TestEncodingCompatibility:
+    """C1：编码兼容（本轮新增）。
+
+    依据 —— 中文 Windows 用户的两个高频真实来源：
+
+    1. **记事本另存为 UTF-8 会写入 BOM**。旧实现 JSON/JSONL 分支用裸
+       ``encoding="utf-8"`` 打开，遇到 BOM 直接抛
+       ``Unexpected UTF-8 BOM (decode using utf-8-sig)`` —— 这是英文底层异常，
+       用户完全看不懂，而且同一平台的 CSV 分支却用了 ``utf-8-sig`` 能吃 BOM，
+       两种格式宽容度不一致。
+    2. **中文版 Excel 导出的 CSV/JSON 常为 GBK/GB18030**。旧实现同样直接抛
+       ``'utf-8' codec can't decode byte ...``。
+
+    两者都不是攻击面，而是日常使用必撞的墙。修复后：UTF-8（含 BOM）与
+    GB18030 均可正常导入；**真正无法识别**的编码仍拒绝，但给中文可操作提示。
+
+    注意：这里刻意**不做** ``errors="replace"`` 静默容错——那会把乱码写进
+    数据集，比直接报错更糟。
+    """
+
+    _RECORD = '[{"instruction": "分类", "output": "正面"}]'
+    _LINE = '{"instruction": "分类", "output": "正面"}\n'
+
+    @pytest.mark.parametrize(
+        "filename,payload",
+        [
+            ("bom.json", ("\ufeff" + _RECORD).encode("utf-8")),
+            ("bom.jsonl", ("\ufeff" + _LINE).encode("utf-8")),
+        ],
+    )
+    def test_utf8_bom_accepted(self, client, filename, payload):
+        """带 BOM 的 UTF-8 文件（记事本默认另存格式）应正常导入。"""
+        response = _upload(client, filename, payload)
+        assert response.status_code == 200, response.text
+        # BOM 不得渗进第一条记录的内容里
+        assert response.json()["total_samples"] == 1
+
+    @pytest.mark.parametrize(
+        "filename,payload",
+        [
+            ("gbk.json", _RECORD.encode("gbk")),
+            ("gbk.jsonl", _LINE.encode("gbk")),
+            ("gb18030.csv", "instruction,output\n分类,正面\n".encode("gb18030")),
+        ],
+    )
+    def test_gbk_family_accepted(self, client, filename, payload):
+        """GBK / GB18030 编码（中文版 Excel 导出常见）应正常导入。"""
+        response = _upload(client, filename, payload)
+        assert response.status_code == 200, response.text
+        assert response.json()["total_samples"] == 1
+
+    def test_bom_stripped_from_content(self, client):
+        """BOM 必须被剥离，不能变成 instruction 的首个字符。"""
+        response = _upload(
+            client, "bom.json", ("\ufeff" + self._RECORD).encode("utf-8")
+        )
+        assert response.status_code == 200, response.text
+        rows = _annotation_rows()
+        assert len(rows) == 1
+        assert rows[0][0] == "分类", f"BOM 未被剥离，instruction={rows[0][0]!r}"
+
+    def test_undecodable_encoding_rejected_with_chinese_hint(self, client):
+        """真正无法解码的字节流仍拒绝，但提示必须是中文且可操作。"""
+        # UTF-16 无 BOM 的裸字节，UTF-8 与 GB18030 都无法解码
+        response = _upload(client, "utf16.json", self._RECORD.encode("utf-16-le"))
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "编码" in detail, f"提示未提及编码：{detail}"
+        assert "UTF-8" in detail, f"未给出「另存为 UTF-8」的行动指引：{detail}"
+        # 不得留下空数据集
+        assert _dataset_list(client) == []
+
+
+class TestJsonParseErrorsHumanized:
+    """C2：JSON / JSONL 解析失败的中文提示（本轮新增）。
+
+    旧实现让 ``json.JSONDecodeError`` 直接穿透到路由层，用户看到的是
+    ``Expecting value: line 1 column 1 (char 0)`` 这类英文底层消息。
+    现在两类失败都换成中文，并附带**可定位的行列号**。
+    """
+
+    def test_malformed_json_reports_line_and_column(self, client):
+        response = _upload(client, "bad.json", b'{"a": }')
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "JSON" in detail
+        assert "第" in detail and "行" in detail, f"未给出行列位置：{detail}"
+        assert _dataset_list(client) == []
+
+    def test_malformed_jsonl_reports_line_number(self, client):
+        response = _upload(
+            client, "bad.jsonl", b'{"instruction": "a", "output": "b"}\n{"bad": }\n'
+        )
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "第 2 行" in detail, f"未指出出错行号：{detail}"
+
+    def test_zero_byte_json_uses_shared_empty_message(self, client):
+        """0 字节 .json 必须与其余空文件走**同一条**中文文案。
+
+        旧实现在 ``json.load()`` 就抛英文 JSONDecodeError，压根没走到
+        空文件校验，导致同为「空文件」却报了两种截然不同的错误。
+        """
+        response = _upload(client, "empty.json", b"")
+        assert response.status_code == 400, response.text
+        detail = response.json()["detail"]
+        assert "没有任何有效记录" in detail, f"未走统一空文件文案：{detail}"
+        assert _dataset_list(client) == []
+
+    def test_whitespace_only_json_uses_shared_empty_message(self, client):
+        response = _upload(client, "blank.json", b"   \n\t\n  ")
+        assert response.status_code == 400, response.text
+        assert "没有任何有效记录" in response.json()["detail"]
