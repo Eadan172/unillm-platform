@@ -123,8 +123,12 @@ venv.bak/
 # Project specific
 # 会话期演示库（本地演示用，不属于交付内容；交付依赖 run_case.py / smoke_test.py 自建数据）
 data/_demo/
+# 运行时写入的数据集/标注载荷（导入与标注会把样本落盘为 dataset_N.json / *_annotations.json）
+# 只有随仓库分发的样例数据需要跟踪，其余一律不入库
 data/datasets/*.jsonl
+data/datasets/*.json
 data/annotations/*.jsonl
+data/annotations/*.json
 data/models/*
 !data/datasets/sample_data.jsonl
 # 自动生成的访问令牌：密钥，绝不提交
@@ -167,3 +171,7 @@ ptmp_*/
 .gitinfo.txt
 .pytest_out.txt
 .pytest_report.xml
+# 验收跑测产物（junitxml / 控制台输出）
+.final_acceptance.*
+.final_server.log
+probe_paths_*/
