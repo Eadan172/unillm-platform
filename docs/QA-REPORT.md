@@ -31,7 +31,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 解释器 | `D:\WorkBuddy\.workbuddy\binaries\python\envs\unillm\Scripts\python.exe`（Python 3.13.14） |
+| 解释器 | 项目虚拟环境中的 `python`（Python 3.13.14） |
 | 框架 | FastAPI + Starlette（BaseHTTPMiddleware）+ SQLAlchemy(SQLite) + Pydantic v2 |
 | 证据手段 | ① 源码阅读（贴行号）② 进程内真实 ASGI 栈（Starlette TestClient）③ **真实 uvicorn 进程 + HTTP**（独立于 TestClient）④ 端到端冒烟脚本 ⑤ 与源码快照基线 diff |
 | 已验证的关键项 | 鉴权逐请求生效、鉴权绕过的**对抗性**尝试、不造假渲染、共享组件单一来源、下载头注入、既有测试是否被削弱、配置/忽略文件、错误契约(401/400/404/405/413/422/500)、CORS 顺序 |
@@ -158,7 +158,7 @@ name=`中文数据集名`               -> attachment; filename*=utf-8''%E4%B8%A
 
 | 编号 | 严重度 | 位置 | 复现/证据 | 期望 vs 实际 | 归属 |
 |---|---|---|---|---|---|
-| **O-1** | **P3（信息泄露·已知取舍）** | `app/main.py:146`、`app/models/schemas.py` `HealthResponse.database` | 公开端点 `/health` 无 Token 即返回 `"database":"C:\\...\\data\\unillm.db"`（实测） | 期望：公开端点不暴露服务器文件系统路径；实际：暴露 DB 绝对/相对路径。**原因**：`database` 是既有测试契约字段，不可移除。**风险评估（诚实）**：仅泄露部署布局，**不含任何凭证**；攻击者无法据此直接访问文件（无文件读取端点，`/api/*` 已鉴权）。综合评级 **低**。建议后续将 `database` 改为布尔/掩码（如 `"database":"sqlite"`）或移入受保护端点，但需同步修改既有测试契约。 | Engineer（非阻断，需团队确认是否保留契约） |
+| **O-1** | **P3（信息泄露·已知取舍）** | `app/main.py:146`、`app/models/schemas.py` `HealthResponse.database` | 公开端点 `/health` 无 Token 即返回 `"database":"<absolute-path>/data/unillm.db"`（实测） | 期望：公开端点不暴露服务器文件系统路径；实际：暴露 DB 绝对/相对路径。**原因**：`database` 是既有测试契约字段，不可移除。**风险评估（诚实）**：仅泄露部署布局，**不含任何凭证**；攻击者无法据此直接访问文件（无文件读取端点，`/api/*` 已鉴权）。综合评级 **低**。建议后续将 `database` 改为布尔/掩码（如 `"database":"sqlite"`）或移入受保护端点，但需同步修改既有测试契约。 | Engineer（非阻断，需团队确认是否保留契约） |
 | **O-2** | **P3（渲染兜底）** | `app/web/datasets.html:75-76` | `grep -n "|| 0"` 命中：`total += Layout.asNumber(taskList[i].total_items) || 0;` | 期望（架构硬要求）：缺失/非数字一律渲染「未知」，绝不落 0；实际：标注任务数**求和**时，缺失值被当作 0 累加，极端情况下会显示 `0` 而非「未知」。**影响面小**：仅用于数据集详情的标注进度汇总；数据集自身「样本数」列正确使用 `Layout.numOrUnknown`（datasets.html:100）。 | Engineer（前端，非阻断） |
 
 **判定说明**：
